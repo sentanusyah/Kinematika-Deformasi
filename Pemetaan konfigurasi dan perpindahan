@@ -1,0 +1,489 @@
+"""
+visual_kinematics_enhanced_fixed.py
+
+Generates step-by-step static visuals AND animations for:
+ - 1D uniaxial extension (bar)
+ - 2D simple shear (grid/plate)
+ - 3D cube (isotropic expansion & simple shear example)
+
+Now with persistent equations (IC, BC, strain) displayed 
+throughout the animations.
+
+Dependencies:
+ - numpy
+ - matplotlib
+
+Run:
+ python visual_kinematics_enhanced_fixed.py
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+import os
+from matplotlib.animation import FuncAnimation, PillowWriter
+
+os.makedirs("figures", exist_ok=True)
+os.makedirs("animations", exist_ok=True)
+
+
+# ------------------------
+# Helper: save pretty figure
+# ------------------------
+def save_fig(fig, name, dpi=180):
+    path = os.path.join("figures", name)
+    fig.tight_layout()
+    fig.savefig(path, dpi=dpi)
+    print("Saved:", path)
+    return path
+
+
+# ========================
+# CASE 1: 1D bar (uniaxial extension)
+# ========================
+def plot_1d_steps(L0=1.0, dL=0.4, npts=7):
+    X = np.linspace(0, L0, npts)
+    
+    # Reference
+    fig = plt.figure(figsize=(7, 5))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot([0, L0], [0, 0], [0, 0], color='C0', linewidth=6, label='Awal (Referensi)')
+    ax.scatter(X, np.zeros_like(X), np.zeros_like(X), color='C0', s=50)
+    ax.set_xlim(-0.1, L0 + dL + 0.2)
+    ax.set_ylim(-0.6, 0.6)
+    ax.set_zlim(-0.6, 0.6)
+    ax.view_init(elev=15, azim=-60)
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.text2D(0.05, 0.92, r"$\mathbf{x}=\mathbf{X}+\mathbf{u}(\mathbf{X},t)$"+"\n"+r"$\mathbf{u}(\mathbf{X},0)=0$",
+              transform=fig.transFigure, fontsize=12, bbox=dict(facecolor='white', alpha=0.8))
+    ax.legend()
+    save_fig(fig, "1d_stepA_reference.png")
+    plt.close(fig)
+
+    # Deformed
+    fig = plt.figure(figsize=(7, 5))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot([0, L0], [0, 0], [0, 0], color='C0', linewidth=3, alpha=0.6, label='Referensi')
+    ax.plot([0, L0 + dL], [0, 0], [0, 0], color='C3', linewidth=6, label='Deformed')
+    ax.scatter(X, np.zeros_like(X), np.zeros_like(X), color='C0', s=30, alpha=0.7)
+    ax.scatter(X + (dL / L0) * X, np.zeros_like(X), np.zeros_like(X), color='C3', s=30)
+    
+    for Xi in X:
+        ui = (dL / L0) * Xi
+        ax.quiver(Xi, 0, 0, ui, 0, 0, color='C2', arrow_length_ratio=0.25, linewidth=1.5, label='Displacement' if Xi == X[0] else "")
+    
+    ax.set_xlim(-0.1, L0 + dL + 0.2)
+    ax.set_ylim(-0.6, 0.6)
+    ax.set_zlim(-0.6, 0.6)
+    ax.view_init(elev=15, azim=-60)
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.text2D(0.05, 0.90, r"$u(X)=\dfrac{\Delta L}{L_0}X$", transform=fig.transFigure, fontsize=12, 
+              bbox=dict(facecolor='white', alpha=0.8))
+    ax.text2D(0.05, 0.82, r"BC: $u(0)=0,\; u(L_0)=\Delta L$", transform=fig.transFigure, fontsize=12,
+              bbox=dict(facecolor='white', alpha=0.8))
+    ax.text2D(0.05, 0.74, r"$\varepsilon = \dfrac{\Delta L}{L_0} = $" + f"{dL/L0:.2f}", 
+              transform=fig.transFigure, fontsize=12, bbox=dict(facecolor='white', alpha=0.8))
+    ax.legend()
+    save_fig(fig, "1d_stepB_deformed.png")
+    plt.close(fig)
+
+    # Animation
+    fig = plt.figure(figsize=(7, 5))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    def animate(frame):
+        ax.clear()
+        current_dL = dL * (frame / 20)
+        u = (current_dL / L0) * X
+        x_def = X + u
+        
+        # Reference
+        ax.plot([0, L0], [0, 0], [0, 0], color='C0', linewidth=3, alpha=0.6)
+        ax.scatter(X, np.zeros_like(X), np.zeros_like(X), color='C0', s=30, alpha=0.7)
+        
+        # Deformed
+        ax.plot([0, L0 + current_dL], [0, 0], [0, 0], color='C3', linewidth=6)
+        ax.scatter(x_def, np.zeros_like(x_def), np.zeros_like(x_def), color='C3', s=30)
+        
+        # Displacement vectors
+        for Xi, ui in zip(X, u):
+            ax.quiver(Xi, 0, 0, ui, 0, 0, color='C2', arrow_length_ratio=0.25, linewidth=1.5)
+        
+        ax.set_xlim(-0.1, L0 + dL + 0.2)
+        ax.set_ylim(-0.6, 0.6)
+        ax.set_zlim(-0.6, 0.6)
+        ax.view_init(elev=15, azim=-60)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title(f'1D Uniaxial Extension (ΔL={current_dL:.2f})')
+        
+        # Persistent text
+        ax.text2D(0.05, 0.92, r"$u(X)=\dfrac{\Delta L}{L_0}X$", transform=fig.transFigure, fontsize=10,
+                 bbox=dict(facecolor='white', alpha=0.8))
+        ax.text2D(0.05, 0.85, r"BC: $u(0)=0,\; u(L_0)=\Delta L$", transform=fig.transFigure, fontsize=10,
+                 bbox=dict(facecolor='white', alpha=0.8))
+        ax.text2D(0.05, 0.78, r"$\varepsilon = \dfrac{\Delta L}{L_0} = $" + f"{current_dL/L0:.2f}", 
+                 transform=fig.transFigure, fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
+        
+        return ax,
+    
+    ani = FuncAnimation(fig, animate, frames=21, interval=100, blit=False)
+    ani.save(os.path.join("animations", "1d_uniaxial_extension.gif"), writer=PillowWriter(fps=10))
+    plt.close(fig)
+    print("Saved animation: 1d_uniaxial_extension.gif")
+
+
+# ========================
+# CASE 2: 2D simple shear
+# ========================
+def plot_2d_steps(L=1.0, gamma=0.6, grid_n=7):
+    xs = np.linspace(0, L, grid_n)
+    ys = np.linspace(0, L, grid_n)
+    Xg, Yg = np.meshgrid(xs, ys)
+
+    # Static reference image
+    fig, ax = plt.subplots(figsize=(7, 6))
+    for i in range(grid_n):
+        ax.plot(Xg[i, :], Yg[i, :], color='C0', linewidth=2)
+    for j in range(grid_n):
+        ax.plot(Xg[:, j], Yg[:, j], color='C0', linewidth=2)
+    
+    ax.scatter(Xg, Yg, color='C0', s=30)
+    ax.set_xlim(-0.1, L + gamma + 0.2)
+    ax.set_ylim(-0.2, L + 0.2)
+    ax.set_aspect('equal')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_title('2D Simple Shear - Konfigurasi Awal')
+    ax.text(0.02, 0.95, r"$\mathbf{x}=\mathbf{X}+\mathbf{u}(\mathbf{X},t)$"+"\n"+r"$\mathbf{u}(X,Y,0)=\mathbf{0}$",
+            transform=ax.transAxes, fontsize=11, bbox=dict(facecolor='white', alpha=0.8))
+    save_fig(fig, "2d_stepA_reference.png")
+    plt.close(fig)
+
+    # Static deformed image
+    fig, ax = plt.subplots(figsize=(7, 6))
+    U = gamma * Yg
+    V = np.zeros_like(U)
+    X_def = Xg + U
+    Y_def = Yg + V
+    
+    # Reference grid (faint)
+    for i in range(grid_n):
+        ax.plot(Xg[i, :], Yg[i, :], color='C0', alpha=0.3, linewidth=1)
+    for j in range(grid_n):
+        ax.plot(Xg[:, j], Yg[:, j], color='C0', alpha=0.3, linewidth=1)
+    
+    # Deformed grid
+    for i in range(grid_n):
+        ax.plot(X_def[i, :], Y_def[i, :], color='C3', linewidth=2)
+    for j in range(grid_n):
+        ax.plot(X_def[:, j], Y_def[:, j], color='C3', linewidth=2)
+    
+    # Displacement vectors
+    for Xi, Yi, Ui, Vi in zip(Xg.flatten(), Yg.flatten(), U.flatten(), V.flatten()):
+        ax.arrow(Xi, Yi, Ui, Vi, head_width=0.02, head_length=0.03,
+                 fc='C2', ec='C2', length_includes_head=True, alpha=0.7)
+    
+    ax.scatter(X_def, Y_def, color='C3', s=30)
+    ax.set_xlim(-0.1, L + gamma + 0.2)
+    ax.set_ylim(-0.2, L + 0.2)
+    ax.set_aspect('equal')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_title('2D Simple Shear - Deformed')
+    ax.text(0.02, 0.95, r"$u(X,Y)=\gamma Y,\; v=0$", transform=ax.transAxes, fontsize=11,
+            bbox=dict(facecolor='white', alpha=0.8))
+    ax.text(0.02, 0.88, r"BC: $u(X,0)=0,\; u(X,h)=\gamma h$", transform=ax.transAxes, fontsize=11,
+            bbox=dict(facecolor='white', alpha=0.8))
+    ax.text(0.02, 0.81, r"$\gamma = \dfrac{\Delta x}{h} = $" + f"{gamma:.2f}", transform=ax.transAxes, fontsize=11,
+            bbox=dict(facecolor='white', alpha=0.8))
+    save_fig(fig, "2d_stepB_deformed.png")
+    plt.close(fig)
+
+    # Animation
+    fig, ax = plt.subplots(figsize=(7, 6))
+    
+    def animate(frame):
+        ax.clear()
+        current_gamma = gamma * (frame / 20)
+        U = current_gamma * Yg
+        V = np.zeros_like(U)
+        X_def = Xg + U
+        Y_def = Yg + V
+        
+        # Reference grid (faint)
+        for i in range(grid_n):
+            ax.plot(Xg[i, :], Yg[i, :], color='C0', alpha=0.3, linewidth=1)
+        for j in range(grid_n):
+            ax.plot(Xg[:, j], Yg[:, j], color='C0', alpha=0.3, linewidth=1)
+        
+        # Deformed grid
+        for i in range(grid_n):
+            ax.plot(X_def[i, :], Y_def[i, :], color='C3', linewidth=2)
+        for j in range(grid_n):
+            ax.plot(X_def[:, j], Y_def[:, j], color='C3', linewidth=2)
+        
+        # Displacement vectors
+        for Xi, Yi, Ui, Vi in zip(Xg.flatten(), Yg.flatten(), U.flatten(), V.flatten()):
+            ax.arrow(Xi, Yi, Ui, Vi, head_width=0.02, head_length=0.03,
+                     fc='C2', ec='C2', length_includes_head=True, alpha=0.7)
+        
+        ax.scatter(X_def, Y_def, color='C3', s=30)
+        ax.set_xlim(-0.1, L + gamma + 0.2)
+        ax.set_ylim(-0.2, L + 0.2)
+        ax.set_aspect('equal')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_title(f'2D Simple Shear (γ={current_gamma:.2f})')
+        
+        # Persistent text
+        ax.text(0.02, 0.95, r"$u(X,Y)=\gamma Y,\; v=0$", transform=ax.transAxes, fontsize=10,
+                bbox=dict(facecolor='white', alpha=0.8))
+        ax.text(0.02, 0.88, r"BC: $u(X,0)=0,\; u(X,h)=\gamma h$", transform=ax.transAxes, fontsize=10,
+                bbox=dict(facecolor='white', alpha=0.8))
+        ax.text(0.02, 0.81, r"$\gamma = \dfrac{\Delta x}{h} = $" + f"{current_gamma:.2f}", 
+                transform=ax.transAxes, fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
+        
+        return ax,
+    
+    ani = FuncAnimation(fig, animate, frames=21, interval=100, blit=False)
+    ani.save(os.path.join("animations", "2d_simple_shear.gif"), writer=PillowWriter(fps=10))
+    plt.close(fig)
+    print("Saved animation: 2d_simple_shear.gif")
+
+
+# ========================
+# CASE 3: 3D cube
+# ========================
+def plot_3d_steps(side=1.0, eps=0.25, gamma=0.4, ngrid=3):
+    coords = np.linspace(0, side, ngrid)
+    Xc, Yc, Zc = np.meshgrid(coords, coords, coords)
+    Xf = Xc.flatten()
+    Yf = Yc.flatten()
+    Zf = Zc.flatten()
+
+    # Static reference image
+    fig = plt.figure(figsize=(7, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Draw cube edges
+    for i in range(ngrid):
+        for j in range(ngrid):
+            ax.plot([coords[i], coords[i]], [coords[j], coords[j]], [coords[0], coords[-1]], 
+                    color='C0', alpha=0.6, linewidth=1)
+            ax.plot([coords[i], coords[i]], [coords[0], coords[-1]], [coords[j], coords[j]], 
+                    color='C0', alpha=0.6, linewidth=1)
+            ax.plot([coords[0], coords[-1]], [coords[i], coords[i]], [coords[j], coords[j]], 
+                    color='C0', alpha=0.6, linewidth=1)
+    
+    ax.scatter(Xf, Yf, Zf, color='C0', s=30)
+    ax.set_xlim(-0.2, side + 0.6)
+    ax.set_ylim(-0.2, side + 0.6)
+    ax.set_zlim(-0.2, side + 0.6)
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title('3D Cube - Konfigurasi Awal')
+    ax.text2D(0.05, 0.92, r"$\mathbf{x}=\mathbf{X}+\mathbf{u}(\mathbf{X},t)$", 
+              transform=fig.transFigure, fontsize=11, bbox=dict(facecolor='white', alpha=0.8))
+    save_fig(fig, "3d_stepA_reference.png")
+    plt.close(fig)
+
+    # Static isotropic expansion image
+    fig = plt.figure(figsize=(7, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Draw expanded cube edges
+    for i in range(ngrid):
+        for j in range(ngrid):
+            ax.plot([coords[i]*(1+eps), coords[i]*(1+eps)], 
+                    [coords[j]*(1+eps), coords[j]*(1+eps)], 
+                    [coords[0]*(1+eps), coords[-1]*(1+eps)], 
+                    color='C3', alpha=0.8, linewidth=1.5)
+            ax.plot([coords[i]*(1+eps), coords[i]*(1+eps)], 
+                    [coords[0]*(1+eps), coords[-1]*(1+eps)], 
+                    [coords[j]*(1+eps), coords[j]*(1+eps)], 
+                    color='C3', alpha=0.8, linewidth=1.5)
+            ax.plot([coords[0]*(1+eps), coords[-1]*(1+eps)], 
+                    [coords[i]*(1+eps), coords[i]*(1+eps)], 
+                    [coords[j]*(1+eps), coords[j]*(1+eps)], 
+                    color='C3', alpha=0.8, linewidth=1.5)
+    
+    ax.scatter(Xf*(1+eps), Yf*(1+eps), Zf*(1+eps), color='C3', s=30)
+    
+    # Displacement vectors
+    for Xi, Yi, Zi in zip(Xf, Yf, Zf):
+        ax.quiver(Xi, Yi, Zi, eps*Xi, eps*Yi, eps*Zi, 
+                  color='C2', arrow_length_ratio=0.2, linewidth=1, alpha=0.7)
+    
+    ax.set_xlim(-0.2, side + 0.6)
+    ax.set_ylim(-0.2, side + 0.6)
+    ax.set_zlim(-0.2, side + 0.6)
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title('3D Cube - Isotropic Expansion')
+    ax.text2D(0.05, 0.92, r"$\mathbf{u}=\varepsilon \mathbf{X}$", 
+              transform=fig.transFigure, fontsize=11, bbox=dict(facecolor='white', alpha=0.8))
+    ax.text2D(0.05, 0.85, r"$\varepsilon = \dfrac{\Delta l}{l_0} = $" + f"{eps:.2f}", 
+              transform=fig.transFigure, fontsize=11, bbox=dict(facecolor='white', alpha=0.8))
+    save_fig(fig, "3d_stepB_isotropic_expansion.png")
+    plt.close(fig)
+
+    # Static simple shear image
+    fig = plt.figure(figsize=(7, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    # Draw sheared cube edges
+    for i in range(ngrid):
+        for j in range(ngrid):
+            ax.plot([coords[0] + gamma*coords[j], coords[-1] + gamma*coords[j]],
+                    [coords[j], coords[j]],
+                    [coords[i], coords[i]], color='C3', alpha=0.8, linewidth=1.5)
+            ax.plot([coords[i] + gamma*coords[0], coords[i] + gamma*coords[-1]],
+                    [coords[0], coords[-1]],
+                    [coords[j], coords[j]], color='C3', alpha=0.8, linewidth=1.5)
+            ax.plot([coords[i] + gamma*coords[0], coords[i] + gamma*coords[-1]],
+                    [coords[j], coords[j]],
+                    [coords[0], coords[-1]], color='C3', alpha=0.8, linewidth=1.5)
+    
+    ax.scatter(Xc.flatten() + gamma*Yc.flatten(), Yc.flatten(), Zc.flatten(), color='C3', s=30)
+    
+    # Displacement vectors
+    for Xi, Yi, Zi in zip(Xf, Yf, Zf):
+        ax.quiver(Xi, Yi, Zi, gamma*Yi, 0, 0, 
+                  color='C2', arrow_length_ratio=0.2, linewidth=1, alpha=0.7)
+    
+    ax.set_xlim(-0.2, side + gamma + 0.6)
+    ax.set_ylim(-0.2, side + 0.6)
+    ax.set_zlim(-0.2, side + 0.6)
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.set_title('3D Cube - Simple Shear')
+    ax.text2D(0.05, 0.92, r"$u=\gamma Y,\; v=0,\; w=0$", 
+              transform=fig.transFigure, fontsize=11, bbox=dict(facecolor='white', alpha=0.8))
+    ax.text2D(0.05, 0.85, r"$\gamma = \tan\theta \approx \theta = $" + f"{gamma:.2f} rad", 
+              transform=fig.transFigure, fontsize=11, bbox=dict(facecolor='white', alpha=0.8))
+    save_fig(fig, "3d_stepC_shear.png")
+    plt.close(fig)
+
+    # Animation isotropic expansion
+    fig = plt.figure(figsize=(7, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    def animate_iso(frame):
+        ax.clear()
+        current_eps = eps * (frame / 20)
+        
+        # Draw expanded cube edges
+        for i in range(ngrid):
+            for j in range(ngrid):
+                ax.plot([coords[i]*(1+current_eps), coords[i]*(1+current_eps)], 
+                        [coords[j]*(1+current_eps), coords[j]*(1+current_eps)], 
+                        [coords[0]*(1+current_eps), coords[-1]*(1+current_eps)], 
+                        color='C3', alpha=0.8, linewidth=1.5)
+                ax.plot([coords[i]*(1+current_eps), coords[i]*(1+current_eps)], 
+                        [coords[0]*(1+current_eps), coords[-1]*(1+current_eps)], 
+                        [coords[j]*(1+current_eps), coords[j]*(1+current_eps)], 
+                        color='C3', alpha=0.8, linewidth=1.5)
+                ax.plot([coords[0]*(1+current_eps), coords[-1]*(1+current_eps)], 
+                        [coords[i]*(1+current_eps), coords[i]*(1+current_eps)], 
+                        [coords[j]*(1+current_eps), coords[j]*(1+current_eps)], 
+                        color='C3', alpha=0.8, linewidth=1.5)
+        
+        ax.scatter(Xf*(1+current_eps), Yf*(1+current_eps), Zf*(1+current_eps), color='C3', s=30)
+        
+        # Displacement vectors
+        for Xi, Yi, Zi in zip(Xf, Yf, Zf):
+            ax.quiver(Xi, Yi, Zi, current_eps*Xi, current_eps*Yi, current_eps*Zi,
+                      color='C2', arrow_length_ratio=0.2, linewidth=1, alpha=0.7)
+        
+        ax.set_xlim(-0.2, side + 0.6)
+        ax.set_ylim(-0.2, side + 0.6)
+        ax.set_zlim(-0.2, side + 0.6)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title(f'3D Isotropic Expansion (ε={current_eps:.2f})')
+        
+        # Persistent text
+        ax.text2D(0.05, 0.92, r"$\mathbf{u}=\varepsilon \mathbf{X}$", 
+                  transform=fig.transFigure, fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
+        ax.text2D(0.05, 0.85, r"$\varepsilon = \dfrac{\Delta l}{l_0} = $" + f"{current_eps:.2f}", 
+                  transform=fig.transFigure, fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
+        
+        return ax,
+    
+    ani_iso = FuncAnimation(fig, animate_iso, frames=21, interval=100, blit=False)
+    ani_iso.save(os.path.join("animations", "3d_isotropic_expansion.gif"), writer=PillowWriter(fps=10))
+    plt.close(fig)
+    print("Saved animation: 3d_isotropic_expansion.gif")
+
+    # Animation simple shear
+    fig = plt.figure(figsize=(7, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    def animate_shear(frame):
+        ax.clear()
+        current_gamma = gamma * (frame / 20)
+        
+        # Draw sheared cube edges
+        for i in range(ngrid):
+            for j in range(ngrid):
+                ax.plot([coords[0] + current_gamma*coords[j], coords[-1] + current_gamma*coords[j]],
+                        [coords[j], coords[j]],
+                        [coords[i], coords[i]], color='C3', alpha=0.8, linewidth=1.5)
+                ax.plot([coords[i] + current_gamma*coords[0], coords[i] + current_gamma*coords[-1]],
+                        [coords[0], coords[-1]],
+                        [coords[j], coords[j]], color='C3', alpha=0.8, linewidth=1.5)
+                ax.plot([coords[i] + current_gamma*coords[0], coords[i] + current_gamma*coords[-1]],
+                        [coords[j], coords[j]],
+                        [coords[0], coords[-1]], color='C3', alpha=0.8, linewidth=1.5)
+        
+        ax.scatter(Xc.flatten() + current_gamma*Yc.flatten(), Yc.flatten(), Zc.flatten(), color='C3', s=30)
+        
+        # Displacement vectors
+        for Xi, Yi, Zi in zip(Xf, Yf, Zf):
+            ax.quiver(Xi, Yi, Zi, current_gamma*Yi, 0, 0,
+                      color='C2', arrow_length_ratio=0.2, linewidth=1, alpha=0.7)
+        
+        ax.set_xlim(-0.2, side + gamma + 0.6)
+        ax.set_ylim(-0.2, side + 0.6)
+        ax.set_zlim(-0.2, side + 0.6)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title(f'3D Simple Shear (γ={current_gamma:.2f})')
+        
+        # Persistent text
+        ax.text2D(0.05, 0.92, r"$u=\gamma Y,\; v=0,\; w=0$", 
+                  transform=fig.transFigure, fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
+        ax.text2D(0.05, 0.85, r"$\gamma = \tan\theta \approx \theta = $" + f"{current_gamma:.2f} rad", 
+                  transform=fig.transFigure, fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
+        
+        return ax,
+    
+    ani_shear = FuncAnimation(fig, animate_shear, frames=21, interval=100, blit=False)
+    ani_shear.save(os.path.join("animations", "3d_simple_shear.gif"), writer=PillowWriter(fps=10))
+    plt.close(fig)
+    print("Saved animation: 3d_simple_shear.gif")
+
+
+# ------------------------
+# Main
+# ------------------------
+if __name__ == "__main__":
+    print("Generating 1D visuals and animation...")
+    plot_1d_steps(L0=1.0, dL=0.4, npts=7)
+    print("Generating 2D visuals and animation...")
+    plot_2d_steps(L=1.0, gamma=0.6, grid_n=7)
+    print("Generating 3D visuals and animations...")
+    plot_3d_steps(side=1.0, eps=0.25, gamma=0.4, ngrid=3)
+    print("All figures saved to ./figures/")
+    print("All animations saved to ./animations/")
