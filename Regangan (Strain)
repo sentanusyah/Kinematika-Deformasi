@@ -1,0 +1,983 @@
+"""
+visual_kinematics_comprehensive.py
+Visualisasi komprehensif untuk kinematika deformasi dengan semua fitur dan animasi
+Fixed version - mengatasi LaTeX error dengan matplotlib settings
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
+import os
+from matplotlib.patches import Polygon
+from mpl_toolkits.mplot3d import Axes3D
+
+# PENTING: Nonaktifkan LaTeX untuk menghindari error
+plt.rcParams['text.usetex'] = False
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['mathtext.default'] = 'regular'
+plt.rcParams['font.size'] = 12
+
+# Setup folders
+os.makedirs("figures_1.2", exist_ok=True)
+os.makedirs("animations_1.2", exist_ok=True)
+
+def save_fig(fig, name, dpi=150):
+    """Menyimpan gambar tanpa menggunakan LaTeX"""
+    path = f"figures_1.2/{name}"
+    fig.tight_layout()
+    try:
+        fig.savefig(path, dpi=dpi, bbox_inches='tight')
+        print(f"Saved: {path}")
+    except Exception as e:
+        print(f"Error saving {path}: {e}")
+    finally:
+        plt.close(fig)
+
+# ========================
+# 1. KINEMATIKA DASAR - DIPERBAIKI
+# ========================
+def plot_kinematics_basics():
+    """Visualisasi konsep dasar kinematika deformasi"""
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    
+    # 1A. Konfigurasi referensi vs deformasi
+    L0, dL = 1.0, 0.4
+    X_points = np.array([0, L0/2, L0])
+    u_points = np.array([0, dL/2, dL])
+    x_def_points = X_points + u_points
+    
+    # Plot garis dan titik
+    axes[0].plot(X_points, [0, 0, 0], 'o-', linewidth=3, color='blue', 
+                label='Referensi', markersize=10)
+    axes[0].plot(x_def_points, [0, 0, 0], 'o-', linewidth=3, color='red', 
+                label='Deformasi', markersize=10)
+    
+    # Panah displacement
+    for i, (x, u, x_def) in enumerate(zip(X_points, u_points, x_def_points)):
+        if u > 0:  # Hanya tunjukkan panah untuk titik yang berpindah
+            axes[0].annotate('', xy=(x_def, 0), xytext=(x, 0),
+                           arrowprops=dict(arrowstyle='->', color='green', 
+                                         lw=2, shrinkA=3, shrinkB=3))
+            axes[0].text((x + x_def)/2, 0.1, f'u={u:.1f}', ha='center', 
+                        color='green', fontweight='bold')
+    
+    axes[0].set_xlim(-0.2, 1.8)
+    axes[0].set_ylim(-0.6, 0.6)
+    axes[0].set_xlabel('Posisi (m)')
+    axes[0].set_ylabel('Y')
+    axes[0].set_title('Konfigurasi Referensi vs Deformasi')
+    axes[0].legend(loc='upper left')
+    axes[0].grid(True, alpha=0.3)
+    
+    # 1B. Deformation gradient action - DIPERBAIKI
+    dX = np.array([0.5, 0.0])
+    F = np.array([[1.3, 0.2], [0.0, 0.9]])
+    dx = F @ dX
+    
+    # Plot vektor dengan skala yang lebih baik
+    axes[1].quiver(0, 0, dX[0], dX[1], angles='xy', scale_units='xy', scale=1,
+                  color='blue', width=0.015, label='dX (Material)', alpha=0.8)
+    axes[1].quiver(0, 0, dx[0], dx[1], angles='xy', scale_units='xy', scale=1,
+                  color='red', width=0.015, label='dx = F·dX (Spatial)', alpha=0.8)
+    
+    # Tambahkan informasi panjang vektor
+    axes[1].text(dX[0]/2, dX[1]/2 + 0.05, f'|dX|={np.linalg.norm(dX):.2f}', 
+                color='blue', ha='center')
+    axes[1].text(dx[0]/2, dx[1]/2 + 0.05, f'|dx|={np.linalg.norm(dx):.2f}', 
+                color='red', ha='center')
+    
+    axes[1].set_xlim(-0.2, 0.9)
+    axes[1].set_ylim(-0.2, 0.5)
+    axes[1].set_xlabel('X₁')
+    axes[1].set_ylabel('X₂')
+    axes[1].set_title('Aksi Deformation Gradient')
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+    axes[1].set_aspect('equal')
+    
+    # Text annotations dengan box yang lebih rapi
+    bbox_props = dict(boxstyle="round,pad=0.3", facecolor="lightyellow", alpha=0.8)
+    axes[0].text(0.7, 0.4, "x = X + u\nF = ∂x/∂X\nε = (FᵀF - I)/2", 
+                fontsize=11, bbox=bbox_props)
+    
+    axes[1].text(0.05, 0.8, f"F = [[{F[0,0]:.1f}  {F[0,1]:.1f}]\n     [{F[1,0]:.1f}  {F[1,1]:.1f}]]", 
+                fontsize=11, bbox=bbox_props)
+    
+    save_fig(fig, "kinematics_basics_enhanced.png")
+
+# ========================
+# 2. DEFORMATION GRADIENT - DIPERBAIKI
+# ========================
+def plot_deformation_gradient():
+    """Visualisasi deformation gradient untuk berbagai jenis deformasi"""
+    cases = [
+        ("Uniaxial Extension", np.array([[1.5, 0.0], [0.0, 1.0]])),
+        ("Simple Shear", np.array([[1.0, 0.6], [0.0, 1.0]])),
+        ("Pure Shear", np.array([[1.4, 0.0], [0.0, 0.7]])),
+        ("Rotation + Scale", np.array([[0.8, -0.4], [0.4, 0.8]]))
+    ]
+    
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    axes = axes.flatten()
+    
+    for idx, (title, F) in enumerate(cases):
+        ax = axes[idx]
+        
+        # Vektor basis
+        dX1 = np.array([0.4, 0.0])
+        dX2 = np.array([0.0, 0.4])
+        
+        # Transformasi
+        dx1 = F @ dX1
+        dx2 = F @ dX2
+        
+        # Buat elemen persegi
+        square = np.array([[0, 0], dX1, dX1 + dX2, dX2, [0, 0]])
+        deformed_square = np.array([[0, 0], dx1, dx1 + dx2, dx2, [0, 0]])
+        
+        # Plot elemen original
+        ax.plot(square[:, 0], square[:, 1], 'b-', linewidth=2, alpha=0.7, label='Original')
+        ax.fill(square[:, 0], square[:, 1], 'blue', alpha=0.2)
+        
+        # Plot elemen deformed
+        ax.plot(deformed_square[:, 0], deformed_square[:, 1], 'r-', linewidth=2, label='Deformed')
+        ax.fill(deformed_square[:, 0], deformed_square[:, 1], 'red', alpha=0.2)
+        
+        # Plot vektor
+        ax.quiver(0, 0, dX1[0], dX1[1], angles='xy', scale_units='xy', scale=1,
+                 color='darkblue', width=0.012, alpha=0.8)
+        ax.quiver(0, 0, dX2[0], dX2[1], angles='xy', scale_units='xy', scale=1,
+                 color='darkgreen', width=0.012, alpha=0.8)
+        
+        ax.quiver(0, 0, dx1[0], dx1[1], angles='xy', scale_units='xy', scale=1,
+                 color='darkred', width=0.012, alpha=0.8)
+        ax.quiver(0, 0, dx2[0], dx2[1], angles='xy', scale_units='xy', scale=1,
+                 color='darkorange', width=0.012, alpha=0.8)
+        
+        ax.set_xlim(-0.8, 0.8)
+        ax.set_ylim(-0.8, 0.8)
+        ax.set_xlabel('X₁')
+        ax.set_ylabel('X₂')
+        ax.set_title(f'{title}\nF = [[{F[0,0]:.1f} {F[0,1]:.1f}; {F[1,0]:.1f} {F[1,1]:.1f}]]', 
+                    fontsize=12)
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal')
+        
+        # Hitung properti
+        J = np.linalg.det(F)
+        area_ratio = J  # Untuk deformasi affine, perubahan area = det(F)
+        
+        # Green-Lagrange strain
+        C = F.T @ F
+        E = 0.5 * (C - np.eye(2))
+        
+        info_text = f"det(F) = {J:.3f}\nArea ratio = {area_ratio:.3f}\nE₁₁ = {E[0,0]:.3f}\nE₂₂ = {E[1,1]:.3f}"
+        
+        ax.text(0.02, 0.98, info_text, transform=ax.transAxes, fontsize=10,
+               bbox=dict(facecolor='white', alpha=0.9, boxstyle="round,pad=0.3"),
+               verticalalignment='top')
+        
+        if idx == 0:
+            ax.legend(loc='lower right')
+    
+    plt.suptitle('Deformation Gradient Effects on Material Elements', fontsize=16)
+    plt.tight_layout()
+    save_fig(fig, "deformation_gradient_enhanced.png")
+
+# ========================
+# 3. STRAIN TENSORS - DIPERBAIKI
+# ========================
+def plot_strain_tensors():
+    """Visualisasi perbandingan strain tensor dengan lebih detail"""
+    # Contoh deformation gradient
+    F_shear = np.array([[1.0, 0.6], [0.0, 1.0]])
+    F_stretch = np.array([[1.4, 0.0], [0.0, 0.8]])
+    F_combined = np.array([[1.2, 0.3], [0.1, 0.9]])
+    
+    fig, axes = plt.subplots(3, 4, figsize=(18, 14))
+    
+    cases = [
+        ("Simple Shear", F_shear),
+        ("Uniaxial Stretch", F_stretch), 
+        ("Combined Deformation", F_combined)
+    ]
+    
+    for row, (title, F) in enumerate(cases):
+        # Hitung berbagai strain measure
+        C = F.T @ F
+        E = 0.5 * (C - np.eye(2))  # Green-Lagrange
+        epsilon = 0.5 * (F + F.T - 2*np.eye(2))  # Infinitesimal
+        
+        # Deformation gradient
+        im1 = axes[row, 0].imshow(F, cmap='RdBu_r', vmin=-1.5, vmax=1.5)
+        axes[row, 0].set_title(f'{title}\nDeformation Gradient F')
+        plt.colorbar(im1, ax=axes[row, 0], shrink=0.8)
+        
+        # Right Cauchy-Green tensor
+        im2 = axes[row, 1].imshow(C, cmap='viridis', vmin=0, vmax=2.5)
+        axes[row, 1].set_title('Right Cauchy-Green C = FᵀF')
+        plt.colorbar(im2, ax=axes[row, 1], shrink=0.8)
+        
+        # Green-Lagrange strain
+        im3 = axes[row, 2].imshow(E, cmap='RdBu_r', vmin=-0.5, vmax=0.5)
+        axes[row, 2].set_title('Green-Lagrange Strain E = ½(C - I)')
+        plt.colorbar(im3, ax=axes[row, 2], shrink=0.8)
+        
+        # Infinitesimal strain
+        im4 = axes[row, 3].imshow(epsilon, cmap='RdBu_r', vmin=-0.5, vmax=0.5)
+        axes[row, 3].set_title('Infinitesimal Strain ε = ½(F + Fᵀ - 2I)')
+        plt.colorbar(im4, ax=axes[row, 3], shrink=0.8)
+        
+        # Add numerical values
+        for col, tensor in enumerate([F, C, E, epsilon]):
+            for (i, j), val in np.ndenumerate(tensor):
+                color = 'white' if abs(val) > (1.0 if col == 0 else 1.25) else 'black'
+                axes[row, col].text(j, i, f'{val:.3f}', ha='center', va='center', 
+                                   color=color, fontsize=10, fontweight='bold')
+    
+    plt.tight_layout()
+    save_fig(fig, "strain_tensors_comprehensive.png")
+
+# ========================
+# 4. ANIMASI DEFORMASI - DIPERBAIKI
+# ========================
+def create_deformation_animation():
+    """Animasi proses deformasi gradual dengan lebih smooth"""
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Grid yang lebih detail
+    nx, ny = 10, 8
+    x = np.linspace(0, 1, nx)
+    y = np.linspace(0, 1, ny)
+    X, Y = np.meshgrid(x, y)
+    
+    def animate(frame):
+        ax.clear()
+        t = frame / 40  # Parameter waktu 0 → 1 (lebih banyak frame)
+        
+        # Multiple deformation effects
+        gamma = 0.8 * t  # Shear
+        stretch_x = 1 + 0.6 * t  # Extension in x
+        stretch_y = 1 - 0.2 * t  # Compression in y
+        
+        # Transformasi grid dengan efek yang lebih kompleks
+        X_def = stretch_x * X + gamma * Y
+        Y_def = stretch_y * Y + 0.1 * t * X  # Small coupling term
+        
+        # Plot grid referensi (faint)
+        for i in range(nx):
+            ax.plot(X[i, :], Y[i, :], 'b-', alpha=0.2, linewidth=1)
+        for j in range(ny):
+            ax.plot(X[:, j], Y[:, j], 'b-', alpha=0.2, linewidth=1)
+        
+        # Plot grid deformasi
+        for i in range(nx):
+            ax.plot(X_def[i, :], Y_def[i, :], 'r-', linewidth=1.5)
+        for j in range(ny):
+            ax.plot(X_def[:, j], Y_def[:, j], 'r-', linewidth=1.5)
+        
+        ax.set_xlim(-0.2, 2.2)
+        ax.set_ylim(-0.2, 1.2)
+        ax.set_xlabel('X₁')
+        ax.set_ylabel('X₂')
+        ax.set_title(f'Deformation Process (t = {t:.2f})', fontsize=14)
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal')
+        
+        # Info deformation parameters
+        info_text = f"Shear γ = {gamma:.3f}\nStretch X = {stretch_x:.3f}\nStretch Y = {stretch_y:.3f}"
+        ax.text(0.02, 0.96, info_text, transform=ax.transAxes, fontsize=11,
+               bbox=dict(facecolor='lightyellow', alpha=0.9, boxstyle="round,pad=0.3"),
+               verticalalignment='top')
+        
+        # Add legend
+        ax.plot([], [], 'b-', alpha=0.5, label='Reference grid')
+        ax.plot([], [], 'r-', label='Deformed grid')
+        ax.legend(loc='upper right')
+        
+        return ax.collections + ax.lines
+    
+    try:
+        ani = FuncAnimation(fig, animate, frames=41, interval=100, blit=False, repeat=True)
+        ani.save("animations_1.2/deformation_process_enhanced.gif", writer=PillowWriter(fps=8))
+        print("Saved: animations_1.2/deformation_process_enhanced.gif")
+    except Exception as e:
+        print(f"Error creating animation: {e}")
+    finally:
+        plt.close(fig)
+
+# ========================
+# 5. 3D DEFORMATION - DIPERBAIKI
+# ========================
+def plot_3d_deformations():
+    """Visualisasi deformasi 3D yang lebih komprehensif"""
+    fig = plt.figure(figsize=(18, 6))
+    
+    # Create a 3D grid dengan lebih banyak titik
+    n = 4
+    x = np.linspace(0, 1, n)
+    y = np.linspace(0, 1, n)
+    z = np.linspace(0, 1, n)
+    X, Y, Z = np.meshgrid(x, y, z)
+    
+    # Flatten untuk plotting
+    X_flat = X.flatten()
+    Y_flat = Y.flatten()
+    Z_flat = Z.flatten()
+    
+    # Original
+    ax1 = fig.add_subplot(131, projection='3d')
+    scatter1 = ax1.scatter(X_flat, Y_flat, Z_flat, c='b', s=50, alpha=0.7, edgecolors='w')
+    ax1.set_title('Original Configuration', fontsize=12)
+    ax1.set_xlabel('X₁')
+    ax1.set_ylabel('X₂')
+    ax1.set_zlabel('X₃')
+    
+    # Uniaxial extension dengan shear
+    ax2 = fig.add_subplot(132, projection='3d')
+    X_ext = 1.8 * X_flat + 0.3 * Y_flat
+    Y_ext = 0.9 * Y_flat
+    Z_ext = Z_flat
+    scatter2 = ax2.scatter(X_ext, Y_ext, Z_ext, c='r', s=50, alpha=0.7, edgecolors='w')
+    ax2.set_title('Uniaxial Extension + Shear\nF₁₁=1.8, F₁₂=0.3, F₂₂=0.9', fontsize=12)
+    ax2.set_xlabel('X₁')
+    ax2.set_ylabel('X₂')
+    ax2.set_zlabel('X₃')
+    
+    # Simple shear dengan rotation
+    ax3 = fig.add_subplot(133, projection='3d')
+    X_shear = X_flat + 0.6 * Y_flat
+    Y_shear = 0.8 * Y_flat + 0.2 * Z_flat
+    Z_shear = 0.8 * Z_flat
+    scatter3 = ax3.scatter(X_shear, Y_shear, Z_shear, c='g', s=50, alpha=0.7, edgecolors='w')
+    ax3.set_title('Shear + Compression\nF₁₂=0.6, F₂₂=0.8, F₂₃=0.2, F₃₃=0.8', fontsize=12)
+    ax3.set_xlabel('X₁')
+    ax3.set_ylabel('X₂')
+    ax3.set_zlabel('X₃')
+    
+    # Set equal aspect ratio untuk semua subplots
+    for ax in [ax1, ax2, ax3]:
+        ax.set_box_aspect([1,1,1])
+        ax.grid(True, alpha=0.3)
+    
+    plt.suptitle('3D Deformation Visualization', fontsize=16)
+    plt.tight_layout()
+    save_fig(fig, "3d_deformations_enhanced.png")
+
+# ========================
+# 6. PRINCIPAL STRETCHES - DIPERBAIKI
+# ========================
+def plot_principal_stretches():
+    """Visualisasi principal stretches dan directions dengan lebih detail"""
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    
+    # Test cases yang lebih beragam
+    F_cases = [
+        np.array([[1.8, 0.0], [0.0, 0.6]]),  # Pure stretch anisotropik
+        np.array([[1.0, 0.8], [0.0, 1.0]]),  # Simple shear besar
+        np.array([[1.3, 0.4], [0.2, 0.9]]),  # General case
+        np.array([[0.9, -0.5], [0.5, 0.9]])  # Rotation + sedikit scaling
+    ]
+    
+    titles = [
+        'Anisotropic Stretch\n(λ₁=1.8, λ₂=0.6)',
+        'Large Simple Shear\n(γ=0.8)', 
+        'General Deformation',
+        'Rotation + Scaling\n(θ≈30°, det=1.06)'
+    ]
+    
+    for idx, (F, title) in enumerate(zip(F_cases, titles)):
+        ax = axes[idx//2, idx%2]
+        
+        # Compute Right Cauchy-Green tensor
+        C = F.T @ F
+        
+        # Eigenvalue decomposition
+        eigenvals, eigenvecs = np.linalg.eig(C)
+        principal_stretches = np.sqrt(eigenvals)
+        
+        # Sort by magnitude
+        sorted_idx = np.argsort(principal_stretches)[::-1]
+        principal_stretches = principal_stretches[sorted_idx]
+        eigenvecs = eigenvecs[:, sorted_idx]
+        
+        # Plot unit circle
+        theta = np.linspace(0, 2*np.pi, 100)
+        circle_x = np.cos(theta)
+        circle_y = np.sin(theta)
+        ax.plot(circle_x, circle_y, 'b--', alpha=0.6, label='Unit circle', linewidth=1.5)
+        
+        # Transform circle menjadi ellipse
+        circle_points = np.vstack([circle_x, circle_y])
+        ellipse_points = F @ circle_points
+        ax.plot(ellipse_points[0], ellipse_points[1], 'r-', linewidth=2.5, label='Deformed ellipse')
+        
+        # Plot principal directions
+        colors = ['darkgreen', 'purple']
+        for i, (stretch, direction) in enumerate(zip(principal_stretches, eigenvecs.T)):
+            # Original principal directions
+            ax.quiver(0, 0, direction[0], direction[1], 
+                     angles='xy', scale_units='xy', scale=1,
+                     color=colors[i], width=0.01, 
+                     label=f'Principal dir {i+1}', alpha=0.8)
+            
+            # Deformed principal directions
+            deformed_dir = F @ direction
+            ax.quiver(0, 0, deformed_dir[0], deformed_dir[1], 
+                     angles='xy', scale_units='xy', scale=1,
+                     color=colors[i], width=0.006, alpha=0.6, linestyle=':')
+            
+            # Label untuk stretches
+            ax.text(deformed_dir[0]*1.1, deformed_dir[1]*1.1, f'λ{i+1}={stretch:.2f}',
+                   color=colors[i], fontweight='bold', fontsize=10)
+        
+        ax.set_xlim(-2.2, 2.2)
+        ax.set_ylim(-2.2, 2.2)
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3)
+        ax.set_xlabel('X₁')
+        ax.set_ylabel('X₂')
+        ax.set_title(title, fontsize=11)
+        
+        # Add text info
+        J = np.linalg.det(F)
+        area_ratio = J  # Untuk deformasi affine
+        
+        info_text = f"det(F) = {J:.3f}\nArea ratio = {area_ratio:.3f}"
+        ax.text(0.02, 0.98, info_text, transform=ax.transAxes, fontsize=10,
+               bbox=dict(facecolor='white', alpha=0.9, boxstyle="round,pad=0.3"),
+               verticalalignment='top')
+        
+        if idx == 0:
+            ax.legend(loc='lower right', fontsize=9)
+    
+    plt.suptitle('Principal Stretches and Directions\n(Transformation of Unit Circle)', 
+                fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    save_fig(fig, "principal_stretches_enhanced.png")
+
+# ========================
+# 7. VOLUME CHANGE VISUALIZATION
+# ========================
+def plot_volume_changes():
+    """Visualisasi perubahan volume akibat deformasi"""
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    
+    # Kasus-kasus dengan perubahan volume berbeda
+    cases = [
+        ("Volume Preservation\ndet(F) = 1.0", np.array([[1.5, 0.3], [-0.2, 0.67]])),
+        ("Volume Expansion\ndet(F) = 2.0", np.array([[1.5, 0.0], [0.0, 1.33]])),
+        ("Volume Compression\ndet(F) = 0.5", np.array([[0.8, 0.2], [0.1, 0.625]]))
+    ]
+    
+    for idx, (title, F) in enumerate(cases):
+        ax = axes[idx]
+        
+        # Buat elemen persegi
+        square = np.array([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])
+        
+        # Transformasi elemen
+        deformed_square = (F @ square.T).T
+        
+        # Plot elemen original
+        ax.plot(square[:, 0], square[:, 1], 'b-', linewidth=3, label='Original')
+        ax.fill(square[:, 0], square[:, 1], 'blue', alpha=0.2)
+        
+        # Plot elemen deformed
+        ax.plot(deformed_square[:, 0], deformed_square[:, 1], 'r-', linewidth=3, label='Deformed')
+        ax.fill(deformed_square[:, 0], deformed_square[:, 1], 'red', alpha=0.2)
+        
+        # Hitung area
+        original_area = 1.0  # Unit square
+        deformed_area = np.linalg.det(F)  # Untuk affine transformation
+        
+        ax.set_xlim(-1, 2.5)
+        ax.set_ylim(-1, 2)
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3)
+        ax.set_xlabel('X₁')
+        ax.set_ylabel('X₂')
+        ax.set_title(title, fontsize=12)
+        
+        # Info text
+        info_text = f"Original area = {original_area:.2f}\nDeformed area = {deformed_area:.2f}\nArea ratio = {deformed_area:.2f}"
+        ax.text(0.02, 0.98, info_text, transform=ax.transAxes, fontsize=11,
+               bbox=dict(facecolor='white', alpha=0.9, boxstyle="round,pad=0.3"),
+               verticalalignment='top')
+        
+        if idx == 0:
+            ax.legend(loc='lower right')
+    
+    plt.suptitle('Volume Changes in Deformation\n(Area change = det(F))', 
+                fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    save_fig(fig, "volume_changes.png")
+
+# ========================
+# ANIMASI TAMBAHAN DARI FILE KEDUA
+# ========================
+
+# ========================
+# 8. ANIMASI DEFORMASI DASAR
+# ========================
+def create_basic_deformation_animation():
+    """Animasi proses deformasi dasar"""
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Grid awal
+    x = np.linspace(0, 1, 6)
+    y = np.linspace(0, 1, 6)
+    X, Y = np.meshgrid(x, y)
+    
+    def animate(frame):
+        ax.clear()
+        t = frame / 30  # Parameter waktu 0 → 1
+        
+        # Deformation gradient yang berubah gradual
+        gamma = 0.8 * t  # Shear
+        stretch = 1 + 0.5 * t  # Stretch
+        
+        # Transformasi grid
+        X_def = X + gamma * Y
+        Y_def = stretch * Y
+        
+        # Plot grid referensi
+        for i in range(len(x)):
+            ax.plot(X[i, :], Y[i, :], 'b-', alpha=0.3, linewidth=1)
+        for j in range(len(y)):
+            ax.plot(X[:, j], Y[:, j], 'b-', alpha=0.3, linewidth=1)
+        
+        # Plot grid deformasi
+        for i in range(len(x)):
+            ax.plot(X_def[i, :], Y_def[i, :], 'r-', linewidth=2)
+        for j in range(len(y)):
+            ax.plot(X_def[:, j], Y_def[:, j], 'r-', linewidth=2)
+        
+        ax.set_xlim(-0.2, 2.0)
+        ax.set_ylim(-0.2, 1.8)
+        ax.set_title(f'Deformation Process (t = {t:.2f})')
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal')
+        
+        # Info strain
+        ax.text(0.02, 0.95, f"Shear γ = {gamma:.3f}", transform=ax.transAxes, fontsize=12,
+                bbox=dict(facecolor='yellow', alpha=0.8))
+        ax.text(0.02, 0.88, f"Stretch = {stretch:.3f}", transform=ax.transAxes, fontsize=12,
+                bbox=dict(facecolor='lightgreen', alpha=0.8))
+        
+        return ax,
+    
+    ani = FuncAnimation(fig, animate, frames=31, interval=100, blit=False)
+    ani.save("animations_1.2/basic_deformation.gif", writer=PillowWriter(fps=10))
+    plt.close(fig)
+    print("Saved: animations_1.2/basic_deformation.gif")
+
+# ========================
+# 9. ANIMASI DEFORMATION GRADIENT
+# ========================
+def create_deformation_gradient_animation():
+    """Animasi aksi deformation gradient pada vektor"""
+    fig, ax = plt.subplots(figsize=(8, 8))
+    
+    # Vektor basis awal
+    dX1 = np.array([0.5, 0.0])
+    dX2 = np.array([0.0, 0.5])
+    
+    def animate(frame):
+        ax.clear()
+        t = frame / 40
+        
+        # Deformation gradient yang berubah
+        F = np.array([
+            [1.0 + 0.8 * t, 0.6 * t],
+            [0.2 * t, 1.0 - 0.3 * t]
+        ])
+        
+        # Transformasi vektor
+        dx1 = F @ dX1
+        dx2 = F @ dX2
+        
+        # Plot vektor original
+        ax.quiver(0, 0, dX1[0], dX1[1], angles='xy', scale_units='xy', scale=1,
+                 color='blue', width=0.015, label='dX₁')
+        ax.quiver(0, 0, dX2[0], dX2[1], angles='xy', scale_units='xy', scale=1,
+                 color='green', width=0.015, label='dX₂')
+        
+        # Plot vektor transformed
+        ax.quiver(0, 0, dx1[0], dx1[1], angles='xy', scale_units='xy', scale=1,
+                 color='red', width=0.015, label='dx₁ = F·dX₁')
+        ax.quiver(0, 0, dx2[0], dx2[1], angles='xy', scale_units='xy', scale=1,
+                 color='orange', width=0.015, label='dx₂ = F·dX₂')
+        
+        # Buat dan plot parallelogram
+        original_square = np.array([[0, 0], dX1, dX1 + dX2, dX2, [0, 0]])
+        deformed_square = np.array([[0, 0], dx1, dx1 + dx2, dx2, [0, 0]])
+        
+        ax.plot(original_square[:, 0], original_square[:, 1], 'b--', alpha=0.6)
+        ax.plot(deformed_square[:, 0], deformed_square[:, 1], 'r-', linewidth=2)
+        
+        ax.set_xlim(-1, 2)
+        ax.set_ylim(-1, 2)
+        ax.set_title(f'Deformation Gradient Action (t = {t:.2f})')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal')
+        
+        # Info matrix
+        ax.text(0.02, 0.95, f"F = [[{F[0,0]:.2f}, {F[0,1]:.2f}]\n    [{F[1,0]:.2f}, {F[1,1]:.2f}]]", 
+                transform=ax.transAxes, fontsize=10,
+                bbox=dict(facecolor='white', alpha=0.8))
+        
+        return ax,
+    
+    ani = FuncAnimation(fig, animate, frames=41, interval=100, blit=False)
+    ani.save("animations_1.2/deformation_gradient_action.gif", writer=PillowWriter(fps=8))
+    plt.close(fig)
+    print("Saved: animations_1.2/deformation_gradient_action.gif")
+
+# ========================
+# 10. ANIMASI STRAIN TENSOR
+# ========================
+def create_strain_tensor_animation():
+    """Animasi evolusi strain tensor"""
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    
+    def animate(frame):
+        for ax in axes:
+            ax.clear()
+        
+        t = frame / 50
+        
+        # Deformation gradient yang berubah
+        F = np.array([
+            [1.0 + 0.5 * t, 0.4 * t],
+            [0.3 * t, 1.0 - 0.2 * t]
+        ])
+        
+        # Hitung strain tensors
+        C = F.T @ F  # Right Cauchy-Green
+        E = 0.5 * (C - np.eye(2))  # Green-Lagrange
+        epsilon = 0.5 * (F + F.T - 2*np.eye(2))  # Infinitesimal
+        
+        tensors = [F, E, epsilon]
+        titles = ['Deformation Gradient F', 'Green-Lagrange Strain E', 'Infinitesimal Strain ε']
+        
+        for i, (ax, tensor, title) in enumerate(zip(axes, tensors, titles)):
+            im = ax.imshow(tensor, cmap='RdBu_r', vmin=-1, vmax=1)
+            ax.set_title(f'{title}\nt = {t:.2f}')
+            ax.set_xticks([0, 1])
+            ax.set_yticks([0, 1])
+            ax.set_xticklabels(['1', '2'])
+            ax.set_yticklabels(['1', '2'])
+            
+            # Tambahkan nilai numerik
+            for (j, k), val in np.ndenumerate(tensor):
+                ax.text(k, j, f'{val:.3f}', ha='center', va='center', 
+                       color='white' if abs(val) > 0.5 else 'black', fontweight='bold')
+        
+        plt.colorbar(im, ax=axes, shrink=0.8)
+        plt.tight_layout()
+        
+        return axes
+    
+    ani = FuncAnimation(fig, animate, frames=51, interval=100, blit=False)
+    ani.save("animations_1.2/strain_tensor_evolution.gif", writer=PillowWriter(fps=6))
+    plt.close(fig)
+    print("Saved: animations_1.2/strain_tensor_evolution.gif")
+
+# ========================
+# 11. ANIMASI PRINCIPAL STRETCHES
+# ========================
+def create_principal_stretches_animation():
+    """Animasi principal stretches"""
+    fig, ax = plt.subplots(figsize=(8, 8))
+    
+    def animate(frame):
+        ax.clear()
+        t = frame / 60
+        
+        # Deformation gradient yang berubah
+        F = np.array([
+            [1.0 + 0.6 * t, 0.4 * np.sin(2*np.pi*t)],
+            [0.2 * t, 1.0 - 0.3 * t]
+        ])
+        
+        # Compute Right Cauchy-Green tensor
+        C = F.T @ F
+        
+        # Eigenvalue decomposition
+        eigenvals, eigenvecs = np.linalg.eig(C)
+        principal_stretches = np.sqrt(eigenvals)
+        
+        # Plot unit circle
+        theta = np.linspace(0, 2*np.pi, 100)
+        circle_x = np.cos(theta)
+        circle_y = np.sin(theta)
+        ax.plot(circle_x, circle_y, 'b--', alpha=0.6, label='Unit circle')
+        
+        # Transform circle
+        circle_points = np.vstack([circle_x, circle_y])
+        ellipse_points = F @ circle_points
+        ax.plot(ellipse_points[0], ellipse_points[1], 'r-', linewidth=2, label='Deformed')
+        
+        # Plot principal directions
+        colors = ['green', 'purple']
+        for i, (stretch, direction) in enumerate(zip(principal_stretches, eigenvecs.T)):
+            ax.quiver(0, 0, direction[0], direction[1], 
+                     angles='xy', scale_units='xy', scale=1,
+                     color=colors[i], width=0.01, 
+                     label=f'λ{i+1} = {stretch:.2f}')
+        
+        ax.set_xlim(-2, 2)
+        ax.set_ylim(-2, 2)
+        ax.set_title(f'Principal Stretches (t = {t:.2f})')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal')
+        
+        return ax,
+    
+    ani = FuncAnimation(fig, animate, frames=61, interval=100, blit=False)
+    ani.save("animations_1.2/principal_stretches.gif", writer=PillowWriter(fps=6))
+    plt.close(fig)
+    print("Saved: animations_1.2/principal_stretches.gif")
+
+# ========================
+# 12. ANIMASI VOLUME CHANGE
+# ========================
+def create_volume_change_animation():
+    """Animasi perubahan volume"""
+    fig, ax = plt.subplots(figsize=(8, 8))
+    
+    # Unit square
+    square = np.array([[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])
+    
+    def animate(frame):
+        ax.clear()
+        t = frame / 40
+        
+        # Deformation gradient dengan perubahan volume
+        if t < 0.5:
+            # Volume expansion
+            F = np.array([[1.0 + t, 0.0], [0.0, 1.0 + t]])
+        else:
+            # Volume compression
+            F = np.array([[2.0 - t, 0.0], [0.0, 2.0 - t]])
+        
+        # Transformasi square
+        deformed_square = (F @ square.T).T
+        
+        # Plot original
+        ax.plot(square[:, 0], square[:, 1], 'b-', linewidth=3, label='Original')
+        ax.fill(square[:, 0], square[:, 1], 'blue', alpha=0.2)
+        
+        # Plot deformed
+        ax.plot(deformed_square[:, 0], deformed_square[:, 1], 'r-', linewidth=3, label='Deformed')
+        ax.fill(deformed_square[:, 0], deformed_square[:, 1], 'red', alpha=0.2)
+        
+        ax.set_xlim(-1, 3)
+        ax.set_ylim(-1, 3)
+        ax.set_title(f'Volume Change (t = {t:.2f})')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal')
+        
+        # Info volume change
+        J = np.linalg.det(F)
+        ax.text(0.02, 0.95, f"det(F) = {J:.3f}", transform=ax.transAxes, fontsize=12,
+                bbox=dict(facecolor='white', alpha=0.8))
+        ax.text(0.02, 0.88, f"Volume ratio = {J:.3f}", transform=ax.transAxes, fontsize=12,
+                bbox=dict(facecolor='lightgreen', alpha=0.8))
+        
+        return ax,
+    
+    ani = FuncAnimation(fig, animate, frames=41, interval=100, blit=False)
+    ani.save("animations_1.2/volume_change.gif", writer=PillowWriter(fps=8))
+    plt.close(fig)
+    print("Saved: animations_1.2/volume_change.gif")
+
+# ========================
+# 13. ANIMASI COMPLEX DEFORMATION
+# ========================
+def create_complex_deformation_animation():
+    """Animasi deformasi kompleks dengan multiple effects"""
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Grid yang lebih detail
+    x = np.linspace(0, 1, 8)
+    y = np.linspace(0, 1, 8)
+    X, Y = np.meshgrid(x, y)
+    
+    def animate(frame):
+        ax.clear()
+        t = frame / 80
+        
+        # Multiple deformation effects
+        shear = 0.8 * np.sin(2*np.pi*t)  # Oscillating shear
+        stretch_x = 1 + 0.5 * t  # Increasing stretch in x
+        stretch_y = 1 - 0.2 * t  # Decreasing stretch in y
+        rotation = 0.5 * np.sin(4*np.pi*t)  # Oscillating rotation
+        
+        # Complex transformation matrix
+        F = np.array([
+            [stretch_x * np.cos(rotation), shear - stretch_y * np.sin(rotation)],
+            [stretch_x * np.sin(rotation), stretch_y * np.cos(rotation)]
+        ])
+        
+        # Transformasi grid
+        points = np.vstack([X.flatten(), Y.flatten()])
+        transformed_points = F @ points
+        
+        X_def = transformed_points[0].reshape(X.shape)
+        Y_def = transformed_points[1].reshape(Y.shape)
+        
+        # Plot grid referensi
+        for i in range(len(x)):
+            ax.plot(X[i, :], Y[i, :], 'b-', alpha=0.2, linewidth=0.8)
+        for j in range(len(y)):
+            ax.plot(X[:, j], Y[:, j], 'b-', alpha=0.2, linewidth=0.8)
+        
+        # Plot grid deformasi
+        for i in range(len(x)):
+            ax.plot(X_def[i, :], Y_def[i, :], 'r-', linewidth=1.5)
+        for j in range(len(y)):
+            ax.plot(X_def[:, j], Y_def[:, j], 'r-', linewidth=1.5)
+        
+        ax.set_xlim(-1.5, 2.5)
+        ax.set_ylim(-1.5, 2.0)
+        ax.set_title(f'Complex Deformation (t = {t:.2f})')
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal')
+        
+        # Info deformation parameters
+        info_text = f"Shear = {shear:.3f}\nStretch X = {stretch_x:.3f}\nStretch Y = {stretch_y:.3f}\nRotation = {rotation:.3f}"
+        ax.text(0.02, 0.96, info_text, transform=ax.transAxes, fontsize=10,
+                bbox=dict(facecolor='white', alpha=0.9),
+                verticalalignment='top')
+        
+        return ax,
+    
+    ani = FuncAnimation(fig, animate, frames=81, interval=100, blit=False)
+    ani.save("animations_1.2/complex_deformation.gif", writer=PillowWriter(fps=8))
+    plt.close(fig)
+    print("Saved: animations_1.2/complex_deformation.gif")
+
+# ========================
+# 14. ANIMASI MATERIAL POINTS
+# ========================
+def create_material_points_animation():
+    """Animasi pergerakan titik material"""
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Titik-titik material dalam grid
+    x = np.linspace(0, 1, 5)
+    y = np.linspace(0, 1, 5)
+    X, Y = np.meshgrid(x, y)
+    
+    # Simpan posisi awal
+    initial_points = np.vstack([X.flatten(), Y.flatten()])
+    
+    def animate(frame):
+        ax.clear()
+        t = frame / 50
+        
+        # Deformation gradient
+        F = np.array([
+            [1.0 + 0.6 * t, 0.4 * np.sin(2*np.pi*t)],
+            [0.3 * t, 1.0 - 0.2 * t]
+        ])
+        
+        # Transformasi titik
+        deformed_points = F @ initial_points
+        
+        # Plot titik original
+        ax.scatter(initial_points[0], initial_points[1], c='blue', s=50, 
+                  alpha=0.6, label='Initial positions')
+        
+        # Plot titik deformed
+        ax.scatter(deformed_points[0], deformed_points[1], c='red', s=50, 
+                  alpha=0.8, label='Deformed positions')
+        
+        # Gambar garis penghubung
+        for i in range(initial_points.shape[1]):
+            ax.plot([initial_points[0,i], deformed_points[0,i]], 
+                   [initial_points[1,i], deformed_points[1,i]], 
+                   'g-', alpha=0.4, linewidth=1)
+        
+        ax.set_xlim(-0.5, 2.5)
+        ax.set_ylim(-0.5, 1.5)
+        ax.set_title(f'Material Points Motion (t = {t:.2f})')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal')
+        
+        return ax,
+    
+    ani = FuncAnimation(fig, animate, frames=51, interval=100, blit=False)
+    ani.save("animations_1.2/material_points.gif", writer=PillowWriter(fps=8))
+    plt.close(fig)
+    print("Saved: animations_1.2/material_points.gif")
+
+# ========================
+# MAIN EXECUTION
+# ========================
+if __name__ == "__main__":
+    print("Starting comprehensive kinematics visualization generation...")
+    print("=" * 70)
+    
+    try:
+        # Visualisasi statis
+        print("1. Generating enhanced kinematics basics...")
+        plot_kinematics_basics()
+        
+        print("2. Generating enhanced deformation gradient visualizations...")
+        plot_deformation_gradient()
+        
+        print("3. Generating comprehensive strain tensor comparisons...")
+        plot_strain_tensors()
+        
+        print("4. Generating enhanced principal stretches visualization...")
+        plot_principal_stretches()
+        
+        print("5. Generating volume change visualizations...")
+        plot_volume_changes()
+        
+        print("6. Generating enhanced 3D deformation visualizations...")
+        plot_3d_deformations()
+        
+        # Animasi
+        print("7. Creating enhanced deformation animation...")
+        create_deformation_animation()
+        
+        print("8. Creating basic deformation animation...")
+        create_basic_deformation_animation()
+        
+        print("9. Creating deformation gradient animation...")
+        create_deformation_gradient_animation()
+        
+        print("10. Creating strain tensor animation...")
+        create_strain_tensor_animation()
+        
+        print("11. Creating principal stretches animation...")
+        create_principal_stretches_animation()
+        
+        print("12. Creating volume change animation...")
+        create_volume_change_animation()
+        
+        print("13. Creating complex deformation animation...")
+        create_complex_deformation_animation()
+        
+        print("14. Creating material points animation...")
+        create_material_points_animation()
+        
+        print("=" * 70)
+        print("✅ ALL VISUALIZATIONS COMPLETED SUCCESSFULLY!")
+        print("📁 Check the 'figures__1.2/' folder for static images")
+        print("🎬 Check the 'animations__1.2/' folder for animated GIFs")
+        print("📊 Total visualizations generated: 7 plots + 8 animations")
+        print("=" * 70)
+        
+    except Exception as e:
+        print(f"❌ Error during execution: {e}")
+        import traceback
+        traceback.print_exc()
