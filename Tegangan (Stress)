@@ -21,8 +21,8 @@ import matplotlib.gridspec as gridspec
 warnings.filterwarnings("ignore")
 
 # --- Output folders ---
-FIG_DIR = "figures_1.3"
-ANIM_DIR = "animations_1.3"
+FIG_DIR = "figures_1_3_ultimate"
+ANIM_DIR = "animations_1_3_ultimate"
 os.makedirs(FIG_DIR, exist_ok=True)
 os.makedirs(ANIM_DIR, exist_ok=True)
 
@@ -839,18 +839,4 @@ def parse_args_and_run():
         run_all(base_figures=True, base_animations=True, enhanced=True)
 
 if __name__ == "__main__":
-    import sys
-
-    if "ipykernel" in sys.modules:  # lagi jalan di notebook
-        print("⚠️ Running in Jupyter, ignoring argparse. Running ALL (figures + animations).")
-        run_figures(base=True, enhanced=True)
-        run_animations(base=True, enhanced=True)
-    else:  # kalau run dari terminal
-        args = parse_args()
-        if args.figures:
-            run_figures(base=not args.no_base, enhanced=True)
-        if args.animations:
-            run_animations(base=not args.no_base, enhanced=True)
-        if not args.figures and not args.animations:
-            run_figures(base=not args.no_base, enhanced=not args.no_base)
-            run_animations(base=not args.no_base, enhanced=not args.no_base)
+    parse_args_and_run()
