@@ -1,0 +1,856 @@
+#!/usr/bin/env python3
+"""
+modul_1_3_ultimate.py
+MODUL 1.3 - VISUALISASI KINEMATIKA DEFORMASI LENGKAP (ULTIMATE MERGED)
+- Gabungan versi base + upgraded
+- Figures: base (5) + enhanced (2) => total ~7
+- Animations: base (9) + enhanced (2) => total ~11
+- CLI flags: --all (default), --figures, --animations, --enhanced-only
+- Output folders: figures_1_3_ultimate, animations_1_3_ultimate
+"""
+import os
+import sys
+import argparse
+import warnings
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+import matplotlib.gridspec as gridspec
+
+warnings.filterwarnings("ignore")
+
+# --- Output folders ---
+FIG_DIR = "figures_1.3"
+ANIM_DIR = "animations_1.3"
+os.makedirs(FIG_DIR, exist_ok=True)
+os.makedirs(ANIM_DIR, exist_ok=True)
+
+# --- Style ---
+try:
+    plt.style.use("seaborn-v0_8-whitegrid")
+except Exception:
+    pass
+
+# ----------------------
+# Utility / Basic funcs
+# ----------------------
+def save_fig(fig, name, fig_dir=FIG_DIR, dpi=150):
+    path = os.path.join(fig_dir, name)
+    fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor='white')
+    plt.close(fig)
+    print(f"Saved figure: {path}")
+
+def safe_det(F):
+    try:
+        return np.linalg.det(F)
+    except Exception:
+        return float("nan")
+
+# ======================
+# Strain & helper funcs
+# ======================
+def finite_strain(F):
+    C = F.T @ F
+    return 0.5 * (C - np.eye(F.shape[0]))
+
+def infinitesimal_strain(F):
+    H = F - np.eye(F.shape[0])
+    return 0.5 * (H + H.T)
+
+def rotation_tensor(F):
+    H = F - np.eye(F.shape[0])
+    return 0.5 * (H - H.T)
+
+def principal_stretches(F):
+    C = F.T @ F
+    eigvals, eigvecs = np.linalg.eigh(C)
+    stretches = np.sqrt(np.maximum(eigvals, 1e-12))
+    idx = np.argsort(stretches)[::-1]
+    return stretches[idx], eigvecs[:, idx]
+
+def polar_decomposition(F):
+    # Basic polar decomposition via SVD (robust enough for our cases)
+    U, s, Vt = np.linalg.svd(F)
+    R = U @ Vt
+    # symmetric stretch U_s = V @ diag(s) @ V.T (approx)
+    try:
+        V = Vt.T
+        U_s = V @ np.diag(s) @ V.T
+    except Exception:
+        U_s = np.eye(F.shape[0])
+    return R, U_s, None
+
+# -----------------------
+# FIGURES (merged set)
+# -----------------------
+
+def fig_systematic_comparison_base():
+    """Base systematic comparison figure (2x4 matrix view)"""
+    fig, axes = plt.subplots(2, 4, figsize=(20, 10))
+    F = np.array([[1.3, 0.4], [0.1, 0.9]])
+    C = F.T @ F
+    E = finite_strain(F)
+    H = F - np.eye(2)
+    eps = infinitesimal_strain(F)
+    omega = rotation_tensor(F)
+    error_matrix = E - eps
+
+    matrices = [
+        (F, 'Deformation Gradient\nF = ∂x/∂X'),
+        (C, 'Right Cauchy-Green\nC = FᵀF'),
+        (E, 'Green-Lagrange Strain\nE = ½(C - I)'),
+        (error_matrix, 'Error: E - ε\n(Higher Order Terms)'),
+        (H, 'Displacement Gradient\nH = F - I'),
+        (eps, 'Infinitesimal Strain\nε = ½(H + Hᵀ)'),
+        (omega, 'Rotation Tensor\nω = ½(H - Hᵀ)'),
+    ]
+
+    for i, (matrix, title) in enumerate(matrices):
+        row, col = i // 4, i % 4
+        ax = axes[row, col]
+        vmax = np.max(np.abs(matrix)) if np.max(np.abs(matrix)) > 1e-12 else 1.0
+        im = ax.imshow(matrix, cmap='RdBu_r', vmin=-vmax, vmax=vmax)
+        ax.set_title(title, fontsize=11)
+        for (r, c), val in np.ndenumerate(matrix):
+            color = 'white' if abs(val) > vmax*0.5 else 'black'
+            ax.text(c, r, f'{val:.3f}', ha='center', va='center', color=color, fontsize=9)
+        plt.colorbar(im, ax=ax, shrink=0.7)
+
+    ax_info = axes[1, 3]
+    ax_info.axis('off')
+    rel_err = np.linalg.norm(error_matrix) / (np.linalg.norm(E) + 1e-12) * 100
+    info_text = (
+        "Finite E vs Infinitesimal ε\n\n"
+        f"Relative error: {rel_err:.2f}%\n"
+        f"det(F) = {np.linalg.det(F):.3f}"
+    )
+    ax_info.text(0.02, 0.95, info_text, transform=ax_info.transAxes, va='top', fontsize=11,
+                 bbox=dict(facecolor='wheat', alpha=0.9))
+    plt.suptitle("Systematic Comparison: F→C→E vs F→H→ε+ω", fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    save_fig(fig, "systematic_comparison_base.png")
+
+def fig_saint_venant_compatibility():
+    """Saint-Venant compatibility figure"""
+    def compatible_strain(x, y):
+        return np.array([[0.02*x, 0.01*x*y],
+                         [0.01*x*y, 0.03*y]])
+    def incompatible_strain(x, y):
+        return np.array([[0.02*x**2, 0.01*x*y],
+                         [0.01*x*y, 0.03*y**2]])
+    def check_compat(eps_func, x, y, h=1e-3):
+        try:
+            e00 = eps_func(x, y)[0,0]
+            e0p = eps_func(x, y+h)[0,0]
+            e0m = eps_func(x, y-h)[0,0]
+            ep0 = eps_func(x+h, y)[1,1]
+            em0 = eps_func(x-h, y)[1,1]
+            epp = eps_func(x+h, y+h)[0,1]
+            epm = eps_func(x+h, y-h)[0,1]
+            emp = eps_func(x-h, y+h)[0,1]
+            emm = eps_func(x-h, y-h)[0,1]
+            d2exx_dy2 = (e0p - 2*e00 + e0m) / (h*h)
+            d2eyy_dx2 = (ep0 - 2*eps_func(x,y)[1,1] + em0) / (h*h)
+            d2exy_dxdy = (epp - epm - emp + emm) / (4*h*h)
+            return d2exx_dy2 + d2eyy_dx2 - 2*d2exy_dxdy
+        except Exception:
+            return 0.0
+
+    x = np.linspace(0.1, 0.9, 40)
+    y = np.linspace(0.1, 0.9, 40)
+    X, Y = np.meshgrid(x, y)
+    Z_compat = np.zeros_like(X)
+    Z_incompat = np.zeros_like(X)
+    compat_vals = np.zeros_like(X)
+    incompat_vals = np.zeros_like(X)
+    for i in range(X.shape[0]):
+        for j in range(X.shape[1]):
+            Z_compat[i,j] = compatible_strain(X[i,j], Y[i,j])[0,0]
+            Z_incompat[i,j] = incompatible_strain(X[i,j], Y[i,j])[0,0]
+            compat_vals[i,j] = check_compat(lambda a,b: compatible_strain(a,b), X[i,j], Y[i,j])
+            incompat_vals[i,j] = check_compat(lambda a,b: incompatible_strain(a,b), X[i,j], Y[i,j])
+
+    fig, axes = plt.subplots(2,2, figsize=(14,12))
+    im1 = axes[0,0].contourf(X, Y, Z_compat, 20, cmap='viridis')
+    axes[0,0].set_title('Compatible Strain Field\nεₓₓ component', fontsize=12)
+    plt.colorbar(im1, ax=axes[0,0])
+    vmax1 = max(np.abs(compat_vals).max(), 1e-6)
+    im2 = axes[0,1].contourf(X, Y, compat_vals, 20, cmap='RdBu_r', vmin=-vmax1, vmax=vmax1)
+    axes[0,1].set_title('Saint-Venant Check (Compatible)\nShould be ≈ 0', fontsize=12)
+    plt.colorbar(im2, ax=axes[0,1])
+    im3 = axes[1,0].contourf(X, Y, Z_incompat, 20, cmap='viridis')
+    axes[1,0].set_title('Incompatible Strain Field\nεₓₓ component', fontsize=12)
+    plt.colorbar(im3, ax=axes[1,0])
+    vmax2 = np.abs(incompat_vals).max()
+    im4 = axes[1,1].contourf(X, Y, incompat_vals, 20, cmap='RdBu_r', vmin=-vmax2, vmax=vmax2)
+    axes[1,1].set_title('Saint-Venant Check (Incompatible)\nShould be ≠ 0', fontsize=12)
+    plt.colorbar(im4, ax=axes[1,1])
+    eq = r'$\frac{\partial^2 \varepsilon_{xx}}{\partial y^2} + \frac{\partial^2 \varepsilon_{yy}}{\partial x^2} = 2\frac{\partial^2 \varepsilon_{xy}}{\partial x \partial y}$'
+    fig.text(0.5, 0.02, eq, fontsize=14, ha='center', bbox=dict(facecolor='white', alpha=0.8))
+    plt.suptitle("Saint-Venant Compatibility Conditions", fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    save_fig(fig, "saint_venant_compatibility.png")
+
+def fig_physical_interpretation():
+    """Physical interpretation figure comparing E and ε for three cases"""
+    F_small = np.array([[1.05, 0.02],[0.01, 0.98]])
+    theta = np.pi/6
+    F_rotation = np.array([[np.cos(theta), -np.sin(theta)],[np.sin(theta), np.cos(theta)]])
+    F_large = np.array([[1.4, 0.3],[0.1, 0.8]])
+    cases = [(F_small,'Small Deformation'), (F_rotation,'Pure Rotation'), (F_large,'Large Deformation')]
+    fig, axes = plt.subplots(2,3, figsize=(18,12))
+    X = np.array([[0,0],[1,0],[1,1],[0,1],[0,0]])
+    for i,(F,name) in enumerate(cases):
+        X_def = X @ F.T
+        ax_shape = axes[0,i]
+        ax_shape.plot(X[:,0], X[:,1], 'b--', linewidth=2)
+        ax_shape.plot(X_def[:,0], X_def[:,1], 'r-', linewidth=3)
+        ax_shape.set_title(f'{name}\nF = {np.array2string(F, precision=2)}', fontsize=12)
+        ax_shape.set_xlim(-0.5,1.8); ax_shape.set_ylim(-0.5,1.5); ax_shape.set_aspect('equal'); ax_shape.grid(True,alpha=0.3)
+        E = finite_strain(F); eps = infinitesimal_strain(F)
+        ax_strain = axes[1,i]
+        components = ['ε₁₁','ε₂₂','ε₁₂']
+        e_vals = [E[0,0], E[1,1], E[0,1]]
+        eps_vals = [eps[0,0], eps[1,1], eps[0,1]]
+        x_pos = np.arange(len(components)); width=0.35
+        bars1 = ax_strain.bar(x_pos - width/2, e_vals, width, label='E', color='red', alpha=0.8)
+        bars2 = ax_strain.bar(x_pos + width/2, eps_vals, width, label='ε', color='blue', alpha=0.8)
+        ax_strain.set_xticks(x_pos); ax_strain.set_xticklabels(components)
+        ax_strain.set_title('Strain Components (E vs ε)'); ax_strain.legend(); ax_strain.grid(True,alpha=0.3)
+        for bar,val in zip(bars1,e_vals):
+            if abs(val) > 1e-6:
+                ax_strain.text(bar.get_x()+bar.get_width()/2, bar.get_height()+np.sign(bar.get_height())*0.001,f'{val:.3f}',ha='center',va='bottom')
+        for bar,val in zip(bars2,eps_vals):
+            if abs(val) > 1e-6:
+                ax_strain.text(bar.get_x()+bar.get_width()/2, bar.get_height()+np.sign(bar.get_height())*0.001,f'{val:.3f}',ha='center',va='bottom')
+        all_vals = e_vals + eps_vals
+        if len(all_vals)>0:
+            ymin,ymax = min(all_vals), max(all_vals)
+            margin = max(abs(ymin),abs(ymax))*0.2
+            ax_strain.set_ylim(ymin-margin, ymax+margin)
+    plt.suptitle("Physical Interpretation: When to Use ε vs E", fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    save_fig(fig, "physical_interpretation.png")
+
+def fig_principal_strain_volume():
+    """Principal stretches and volume changes (base)"""
+    F = np.array([[1.4,0.3],[0.2,0.8]])
+    stretches, directions = principal_stretches(F)
+    E = finite_strain(F)
+    eps = infinitesimal_strain(F)
+    J = np.linalg.det(F); dV = J-1; tr_eps = np.trace(eps)
+    X = np.array([[0,0],[1,0],[1,1],[0,1],[0,0]])
+    X_def = X @ F.T
+    fig, axes = plt.subplots(2,2, figsize=(14,12))
+    ax1 = axes[0,0]; ax1.plot(X[:,0],X[:,1],'b--',linewidth=2); ax1.plot(X_def[:,0],X_def[:,1],'r-',linewidth=3)
+    center = np.array([0.5,0.5]) @ F.T
+    for i,(stretch,direction) in enumerate(zip(stretches,directions.T)):
+        vec = direction * stretch * 0.3
+        ax1.arrow(center[0],center[1],vec[0],vec[1], head_width=0.05, head_length=0.08, color='green', linewidth=2)
+        ax1.text(center[0]+vec[0]*1.2, center[1]+vec[1]*1.2, f'λ{i+1}={stretch:.2f}', color='green', fontweight='bold')
+    ax1.set_title('Deformed Shape with Principal Directions'); ax1.set_aspect('equal'); ax1.grid(True,alpha=0.3); ax1.legend()
+    ax2 = axes[0,1]
+    theta = np.linspace(0,2*np.pi,100); unit_circle = np.vstack([np.cos(theta), np.sin(theta)])
+    ellipse = F @ unit_circle
+    ax2.plot(unit_circle[0],unit_circle[1],'b--',alpha=0.6); ax2.plot(ellipse[0],ellipse[1],'r-')
+    for i,(stretch,direction) in enumerate(zip(stretches,directions.T)):
+        vec = direction*stretch
+        ax2.arrow(0,0,vec[0],vec[1], head_width=0.06, head_length=0.08, color='green')
+        ax2.text(vec[0]*1.1, vec[1]*1.1, f'λ{i+1}={stretch:.2f}', color='green', fontweight='bold')
+    lim = max(np.max(np.abs(ellipse)), 1.5); ax2.set_xlim(-lim,lim); ax2.set_ylim(-lim,lim); ax2.set_aspect('equal'); ax2.grid(True)
+    ax3 = axes[1,0]; components=['λ₁','λ₂','λ₁/λ₂']; values=[stretches[0],stretches[1],stretches[0]/stretches[1]]
+    bars = ax3.bar(components, values, alpha=0.8, color=['red','blue','green'])
+    for bar,val in zip(bars,values): ax3.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.01, f'{val:.2f}', ha='center')
+    ax3.set_title('Principal Stretches'); ax3.grid(True); ax3.set_ylim(0, max(values)*1.2)
+    ax4 = axes[1,1]; measures=['det(F)','ΔV/V','tr(ε)']; values_vol=[J,dV,tr_eps]; bars2 = ax4.bar(measures, values_vol, alpha=0.8, color=['purple','orange','cyan'])
+    for bar,val in zip(bars2,values_vol): ax4.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.005, f'{val:.3f}',ha='center')
+    ax4.set_title('Volume Change Measures'); ax4.grid(True)
+    info_text = f"Principal Stretches: λ₁={stretches[0]:.3f}, λ₂={stretches[1]:.3f}\nVolume Change: det(F)={J:.3f} → ΔV/V={dV:.3f}\ntr(ε)={tr_eps:.3f}"
+    fig.text(0.5, 0.02, info_text, fontsize=12, ha='center', bbox=dict(facecolor='white', alpha=0.8))
+    plt.suptitle('Principal Strains and Volume Change', fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    save_fig(fig, "principal_strain_volume.png")
+
+def fig_deformation_concepts():
+    """Different deformation concepts (base)"""
+    F_cases = [
+        (np.array([[1.2,0.3],[0.0,0.9]]),'General Deformation'),
+        (np.array([[1.0,0.5],[0.0,1.0]]),'Simple Shear'),
+        (np.array([[1.4,0.0],[0.0,1.4]]),'Uniform Expansion'),
+        (np.array([[0.8,0.0],[0.0,0.8]]),'Uniform Compression'),
+        (np.array([[np.cos(0.3), -np.sin(0.3)],[np.sin(0.3), np.cos(0.3)]]),'Pure Rotation'),
+        (np.array([[1.3,0.0],[0.0,0.7]]),'Anisotropic Stretch'),
+    ]
+    fig, axes = plt.subplots(2,3, figsize=(18,12))
+    X = np.array([[0,0],[1,0],[1,1],[0,1],[0,0]])
+    for i,(F,title) in enumerate(F_cases):
+        row,col = i//3, i%3; ax=axes[row,col]
+        X_def = X @ F.T
+        ax.plot(X[:,0],X[:,1],'b--',linewidth=2); ax.plot(X_def[:,0],X_def[:,1],'r-',linewidth=3)
+        E = finite_strain(F); eps = infinitesimal_strain(F); detF = np.linalg.det(F)
+        ax.set_title(f"{title}\nF={np.array2string(F,precision=2)}", fontsize=11)
+        all_x = np.concatenate([X[:,0], X_def[:,0]]); all_y = np.concatenate([X[:,1], X_def[:,1]])
+        margin=0.1; ax.set_xlim(min(all_x)-margin, max(all_x)+margin); ax.set_ylim(min(all_y)-margin, max(all_y)+margin)
+        ax.set_aspect('equal'); ax.grid(True,alpha=0.3); ax.legend(fontsize=8)
+        info_text = f"det(F)={detF:.3f}\nE11={E[0,0]:.3f}, E22={E[1,1]:.3f}\nε11={eps[0,0]:.3f}, ε22={eps[1,1]:.3f}"
+        ax.text(0.02,0.98, info_text, transform=ax.transAxes, va='top', bbox=dict(facecolor='wheat', alpha=0.8), fontsize=8)
+    plt.suptitle("Different Deformation Types", fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    save_fig(fig, "deformation_concepts.png")
+
+# -------------------------
+# ENHANCED FIGURES (extra)
+# -------------------------
+def fig_enhanced_systematic_comparison():
+    """Enhanced systematic comparison with 3D cube + polar decomposition"""
+    fig = plt.figure(figsize=(20, 12))
+    gs = gridspec.GridSpec(3, 4, figure=fig)
+    F = np.array([[1.3, 0.4, 0.1], [0.1, 0.9, 0.2], [0.05, 0.1, 1.1]])
+    C = F.T @ F
+    E = finite_strain(F)
+    H = F - np.eye(3)
+    eps = infinitesimal_strain(F)
+    omega = rotation_tensor(F)
+    error_matrix = E - eps
+    matrices = [
+        (F, 'Deformation Gradient\nF = ∂x/∂X', gs[0,0]),
+        (C, 'Right Cauchy-Green\nC = FᵀF', gs[0,1]),
+        (E, 'Green-Lagrange Strain\nE = ½(C - I)', gs[0,2]),
+        (error_matrix, 'Error: E - ε\n(Higher Order Terms)', gs[0,3]),
+        (H, 'Displacement Gradient\nH = F - I', gs[1,0]),
+        (eps, 'Infinitesimal Strain\nε = ½(H + Hᵀ)', gs[1,1]),
+        (omega, 'Rotation Tensor\nω = ½(H - Hᵀ)', gs[1,2]),
+    ]
+    for matrix, title, pos in matrices:
+        ax = fig.add_subplot(pos)
+        vmax = np.max(np.abs(matrix)) if np.max(np.abs(matrix))>1e-12 else 1
+        im = ax.imshow(matrix, cmap='RdBu_r', vmin=-vmax, vmax=vmax)
+        ax.set_title(title, fontsize=11)
+        for (r,c),val in np.ndenumerate(matrix):
+            color = 'white' if abs(val)>vmax*0.5 else 'black'
+            ax.text(c,r,f'{val:.3f}', ha='center', va='center', color=color, fontsize=8, fontweight='bold')
+        plt.colorbar(im, ax=ax, shrink=0.8)
+        ax.set_xticks(range(matrix.shape[1])); ax.set_yticks(range(matrix.shape[0]))
+    ax_info = fig.add_subplot(gs[1,3]); ax_info.axis('off')
+    R,U,V = polar_decomposition(F); detF = np.linalg.det(F)
+    rel_err = np.linalg.norm(error_matrix)/(np.linalg.norm(E)+1e-12)*100
+    info_text = (
+        "FINITE VS INFINITESIMAL STRAIN\n\n"
+        f"Relative error: {rel_err:.2f}%\n"
+        f"det(F) = {detF:.3f}\n"
+        f"Volume change: {detF-1:+.3f}"
+    )
+    ax_info.text(0.02,0.95, info_text, transform=ax_info.transAxes, va='top', fontsize=11, bbox=dict(facecolor='lightblue',alpha=0.8), fontfamily='monospace')
+    # 3D cube
+    ax3d = fig.add_subplot(gs[2,:], projection='3d')
+    cube_vertices = np.array([[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]])
+    deformed = cube_vertices @ F.T
+    # original cube wireframe
+    for i in range(4):
+        ax3d.plot3D(cube_vertices[[i,(i+1)%4],0], cube_vertices[[i,(i+1)%4],1], cube_vertices[[i,(i+1)%4],2], 'b--', alpha=0.6)
+        ax3d.plot3D(cube_vertices[[i+4,(i+1)%4+4],0], cube_vertices[[i+4,(i+1)%4+4],1], cube_vertices[[i+4,(i+1)%4+4],2], 'b--', alpha=0.6)
+        ax3d.plot3D([cube_vertices[i,0], cube_vertices[i+4,0]], [cube_vertices[i,1], cube_vertices[i+4,1]], [cube_vertices[i,2], cube_vertices[i+4,2]], 'b--', alpha=0.6)
+    # deformed cube
+    for i in range(4):
+        ax3d.plot3D(deformed[[i,(i+1)%4],0], deformed[[i,(i+1)%4],1], deformed[[i,(i+1)%4],2], 'r-', linewidth=2)
+        ax3d.plot3D(deformed[[i+4,(i+1)%4+4],0], deformed[[i+4,(i+1)%4+4],1], deformed[[i+4,(i+1)%4+4],2], 'r-', linewidth=2)
+        ax3d.plot3D([deformed[i,0], deformed[i+4,0]], [deformed[i,1], deformed[i+4,1]], [deformed[i,2], deformed[i+4,2]], 'r-', linewidth=2)
+    ax3d.set_title('3D Deformation Visualization'); ax3d.set_xlabel('X'); ax3d.set_ylabel('Y'); ax3d.set_zlabel('Z')
+    plt.suptitle("ENHANCED SYSTEMATIC COMPARISON: Finite vs Infinitesimal Strain", fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    save_fig(fig, "enhanced_systematic_comparison.png", dpi=200)
+
+def fig_advanced_strain_analysis():
+    """Advanced strain analysis figure — multiple 2D cases"""
+    fig = plt.figure(figsize=(18,12))
+    gs = gridspec.GridSpec(3,3, figure=fig)
+    cases = [
+        (np.array([[1.2,0.1],[0.0,1.1]]),"Uniform Stretch"),
+        (np.array([[1.0,0.3],[0.0,1.0]]),"Simple Shear"),
+        (np.array([[np.cos(0.5), -np.sin(0.5)],[np.sin(0.5), np.cos(0.5)]]),"Rotation"),
+        (np.array([[1.3,0.2],[0.1,0.8]]),"General Deformation"),
+        (np.array([[0.9,0.0],[0.0,1.2]]),"Anisotropic Scaling"),
+        (np.array([[1.1,0.4],[0.1,0.9]]),"Shear + Stretch"),
+    ]
+    for idx,(F,title) in enumerate(cases):
+        row,col = divmod(idx,3); ax = fig.add_subplot(gs[row,col])
+        E = finite_strain(F); eps = infinitesimal_strain(F); error = np.linalg.norm(E-eps); detF = np.linalg.det(F)
+        X = np.array([[0,0],[1,0],[1,1],[0,1],[0,0]]); X_def = X @ F.T
+        ax.plot(X[:,0],X[:,1],'b--',alpha=0.7); ax.plot(X_def[:,0],X_def[:,1],'r-')
+        stretches, directions = principal_stretches(F); center = np.mean(X_def[:-1],axis=0)
+        for i,(stretch,direction) in enumerate(zip(stretches,directions.T)):
+            vec = direction*stretch*0.3; ax.arrow(center[0],center[1],vec[0],vec[1], head_width=0.03, head_length=0.04, color='green')
+        ax.set_title(f"{title}\ndet(F)={detF:.2f}, Error={error:.3f}", fontsize=10); ax.set_aspect('equal'); ax.grid(True,alpha=0.3); ax.legend(['Reference','Deformed'], fontsize=8)
+        all_coords = np.vstack([X,X_def]); xmin,ymin = np.min(all_coords,axis=0); xmax,ymax = np.max(all_coords,axis=0); margin=0.2
+        ax.set_xlim(xmin-margin, xmax+margin); ax.set_ylim(ymin-margin, ymax+margin)
+    plt.suptitle("Advanced Strain Analysis: Multiple Deformation Cases", fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    save_fig(fig, "advanced_strain_analysis.png", dpi=200)
+
+# -------------------------
+# Animations (merged)
+# -------------------------
+
+def anim_systematic_comparison():
+    """Animation 1 (base): text & matrix animation"""
+    fig, axes = plt.subplots(2,4, figsize=(20,10))
+    F_final = np.array([[1.3,0.4],[0.1,0.9]])
+    titles = [
+        'Deformation Gradient\nF = ∂x/∂X','Right Cauchy-Green\nC = FᵀF','Green-Lagrange Strain\nE = ½(C - I)',
+        'Error: E - ε\n(Higher Order Terms)','Displacement Gradient\nH = F - I','Infinitesimal Strain\nε = ½(H + Hᵀ)',
+        'Rotation Tensor\nω = ½(H - Hᵀ)','Info Panel'
+    ]
+    text_objs = []
+    for i in range(7):
+        row,col = i//4, i%4; ax = axes[row,col]
+        ax.set_title(titles[i], fontsize=10)
+        ax.set_xticks([0,1]); ax.set_yticks([0,1]); ax.set_xticklabels(['0','1']); ax.set_yticklabels(['0','1'])
+        objs=[]
+        for r in range(2):
+            for c in range(2):
+                objs.append(ax.text(c,r,'0.000', ha='center', va='center', fontsize=9))
+        text_objs.append(objs)
+    ax_info = axes[1,3]; ax_info.axis('off')
+    info_text_obj = ax_info.text(0.05,0.95,"", transform=ax_info.transAxes, fontsize=9, va='top', bbox=dict(facecolor='wheat', alpha=0.9))
+    def update(frame):
+        t = frame/50.0
+        F_t = np.eye(2) + t*(F_final - np.eye(2))
+        C_t = F_t.T @ F_t; E_t = finite_strain(F_t); H_t = F_t - np.eye(2); eps_t = infinitesimal_strain(F_t); omega_t = rotation_tensor(F_t)
+        mats = [F_t, C_t, E_t, E_t - eps_t, H_t, eps_t, omega_t]
+        for i,m in enumerate(mats):
+            row,col = i//4, i%4; ax = axes[row,col]
+            vmax = max(np.abs(m).max(), 1e-12)
+            ax.imshow(m, cmap='RdBu_r', vmin=-vmax, vmax=vmax, alpha=0.45)
+            for idx,((r,c),val) in enumerate(np.ndenumerate(m)):
+                color = 'white' if abs(val)>vmax*0.5 else 'black'
+                text_objs[i][idx].set_text(f'{val:.3f}'); text_objs[i][idx].set_color(color)
+        rel_err = np.linalg.norm(E_t - eps_t)/(np.linalg.norm(E_t)+1e-12)*100
+        info = f"t={t:.2f}\nRelative error: {rel_err:.2f}%\nE = ½(FᵀF - I)\nε = ½(H+Hᵀ)"
+        info_text_obj.set_text(info)
+        return [info_text_obj] + [t for sub in text_objs for t in sub]
+    ani = FuncAnimation(fig, update, frames=51, interval=100, blit=False)
+    path = os.path.join(ANIM_DIR, "systematic_comparison_animation.gif")
+    ani.save(path, writer=PillowWriter(fps=10))
+    plt.close(fig); print(f"Saved animation: {path}")
+
+def anim_transition_deformation():
+    """Animation 2 (base): transition grid"""
+    F_final = np.array([[1.4,0.6],[0.2,0.9]])
+    x = np.linspace(0,1,6); y = np.linspace(0,1,6); Xg,Yg = np.meshgrid(x,y)
+    points = np.vstack([Xg.flatten(), Yg.flatten()]).T
+    fig, ax = plt.subplots(figsize=(10,8))
+    unit_circle = np.vstack([np.cos(np.linspace(0,2*np.pi,100)), np.sin(np.linspace(0,2*np.pi,100))])
+    def update(frame):
+        ax.clear()
+        t=frame/50.0; F_t = np.eye(2) + t*(F_final - np.eye(2))
+        for i in range(len(x)): ax.plot(Xg[i,:], Yg[i,:], 'b-', alpha=0.2)
+        for j in range(len(y)): ax.plot(Xg[:,j], Yg[:,j], 'b-', alpha=0.2)
+        pts_def = points @ F_t.T
+        for i in range(len(x)):
+            ax.plot(pts_def[i*len(y):(i+1)*len(y),0], pts_def[i*len(y):(i+1)*len(y),1], 'r-', linewidth=2)
+        for j in range(len(y)):
+            ax.plot(pts_def[j::len(y),0], pts_def[j::len(y),1], 'r-', linewidth=2)
+        E = finite_strain(F_t); eps = infinitesimal_strain(F_t); detF = np.linalg.det(F_t); error = np.linalg.norm(E-eps)
+        ax.text(0.02,0.98, f"t={t:.2f}\nF=\n{np.array2string(F_t,precision=3)}\ndet(F)={detF:.3f}\n‖E-ε‖={error:.4f}", transform=ax.transAxes, va='top', bbox=dict(facecolor='wheat',alpha=0.9), fontsize=9)
+        ax.set_xlim(-0.5,2.2); ax.set_ylim(-0.5,1.8); ax.set_aspect('equal'); ax.grid(True,alpha=0.3); ax.set_title("Deformation Transition Process")
+        return []
+    ani = FuncAnimation(fig, update, frames=51, interval=80, blit=False)
+    path = os.path.join(ANIM_DIR, "transition_deformation.gif")
+    ani.save(path, writer=PillowWriter(fps=12))
+    plt.close(fig); print(f"Saved animation: {path}")
+
+def anim_rotation_vs_strain():
+    """Animation 3 (base): pure rotation showing E vs ε"""
+    fig, axes = plt.subplots(1,2, figsize=(12,6))
+    max_theta = np.pi * 0.8
+    X = np.array([[0,0],[1,0],[1,1],[0,1],[0,0]])
+    def update(frame):
+        t = frame/60.0; theta = t*max_theta
+        F = np.array([[np.cos(theta), -np.sin(theta)],[np.sin(theta), np.cos(theta)]])
+        X_def = X @ F.T
+        axes[0].clear(); axes[1].clear()
+        axes[0].plot(X[:,0],X[:,1],'b--'); axes[0].plot(X_def[:,0],X_def[:,1],'r-')
+        axes[0].set_title(f"Pure Rotation: θ={theta*180/np.pi:.1f}°"); axes[0].set_xlim(-1.2,1.2); axes[0].set_ylim(-1.2,1.2); axes[0].set_aspect('equal'); axes[0].grid(True)
+        E = finite_strain(F); eps = infinitesimal_strain(F); error = np.linalg.norm(E-eps)
+        info = (f"θ={theta:.3f} rad ({theta*180/np.pi:.1f}°)\n\nGreen-Lagrange E:\n{np.array2string(E,precision=4)}\n\nInfinitesimal ε:\n{np.array2string(eps,precision=4)}\n\nError: ‖E-ε‖={error:.6f}\nNote: For pure rotation, E ≈ 0")
+        axes[1].axis('off'); axes[1].text(0.02,0.98,info, transform=axes[1].transAxes, va='top', bbox=dict(facecolor='wheat',alpha=0.9))
+        return []
+    ani = FuncAnimation(fig, update, frames=61, interval=80, blit=False)
+    path = os.path.join(ANIM_DIR, "rotation_vs_strain.gif")
+    ani.save(path, writer=PillowWriter(fps=12))
+    plt.close(fig); print(f"Saved animation: {path}")
+
+def anim_principal_ellipse():
+    """Animation 4 (base): strain ellipse transformation"""
+    F_final = np.array([[1.6,0.5],[0.2,0.9]])
+    fig, ax = plt.subplots(figsize=(8,8))
+    theta = np.linspace(0,2*np.pi,100)
+    unit_circle = np.vstack([np.cos(theta), np.sin(theta)])
+    def update(frame):
+        ax.clear()
+        t = frame/60.0; F_t = np.eye(2) + t*(F_final - np.eye(2))
+        ellipse = F_t @ unit_circle
+        ax.plot(unit_circle[0],unit_circle[1],'b--',alpha=0.6); ax.plot(ellipse[0],ellipse[1],'r-')
+        stretches, directions = principal_stretches(F_t)
+        for i,(stretch,direction) in enumerate(zip(stretches,directions.T)):
+            vec = direction*stretch; ax.arrow(0,0,vec[0],vec[1], head_width=0.05, head_length=0.08, color='green'); ax.text(vec[0]*1.1, vec[1]*1.1, f'λ{i+1}={stretch:.2f}', color='green', fontweight='bold')
+        lim = max(np.max(np.abs(ellipse)),1.2); ax.set_xlim(-lim,lim); ax.set_ylim(-lim,lim); ax.set_aspect('equal'); ax.grid(True); ax.set_title(f"Strain Ellipse (t={t:.2f})")
+        detF = np.linalg.det(F_t); ax.text(0.02,0.98, f"Principal stretches: {stretches.round(3)}\ndet(F)={detF:.3f}", transform=ax.transAxes, va='top', bbox=dict(facecolor='wheat',alpha=0.9))
+        return []
+    ani = FuncAnimation(fig, update, frames=61, interval=80, blit=False)
+    path = os.path.join(ANIM_DIR, "principal_ellipse.gif")
+    ani.save(path, writer=PillowWriter(fps=12))
+    plt.close(fig); print(f"Saved animation: {path}")
+
+def anim_volume_change():
+    """Animation 5 (base): volume/area change visualization"""
+    fig, axes = plt.subplots(1,2, figsize=(12,6))
+    X = np.array([[0,0],[1,0],[1,1],[0,1],[0,0]])
+    def update(frame):
+        axes[0].clear(); axes[1].clear()
+        t = frame/40.0; s1 = 1.0 + t*1.0; s2 = 1.0 + t*0.5
+        F = np.array([[s1, 0.2*t],[0.1*t, s2]])
+        X_def = X @ F.T
+        axes[0].plot(X[:,0],X[:,1],'b--'); axes[0].plot(X_def[:,0],X_def[:,1],'r-'); axes[0].set_aspect('equal'); axes[0].grid(True)
+        detF = np.linalg.det(F); eps = infinitesimal_strain(F); tr_eps = np.trace(eps); error = abs((detF-1)-tr_eps)
+        info_text = (f"F:\n{np.array2string(F,precision=3)}\n\ndet(F)={detF:.3f}\nΔV/V={detF-1:.3f}\ntr(ε)={tr_eps:.3f}\nError={error:.4f}")
+        axes[1].text(0.02,0.98, info_text, transform=axes[1].transAxes, va='top', bbox=dict(facecolor='wheat',alpha=0.9)); axes[1].axis('off')
+        axes[0].set_title(f"Deformation (t={t:.2f})")
+        return []
+    ani = FuncAnimation(fig, update, frames=41, interval=100, blit=False)
+    path = os.path.join(ANIM_DIR, "volume_change.gif")
+    ani.save(path, writer=PillowWriter(fps=10))
+    plt.close(fig); print(f"Saved animation: {path}")
+
+def anim_saint_venant_morph():
+    """Animation 6 (base): Saint-Venant morphing"""
+    fig, ax = plt.subplots(figsize=(8,7))
+    x = np.linspace(0,1,80); y = np.linspace(0,1,80); X,Y = np.meshgrid(x,y)
+    def strain_field(x,y,m):
+        exx = 0.02*((1-m)*x + m*x**2); eyy = 0.03*y; exy = 0.01*x*y*(1+m)
+        return exx, eyy, exy
+    def update(frame):
+        ax.clear()
+        t = frame/60.0; m=t
+        EXX, EYY, EXY = strain_field(X,Y,m)
+        im = ax.contourf(X,Y,EXX,20,cmap='viridis')
+        plt.colorbar(im, ax=ax, shrink=0.8)
+        h=0.02; xc,yc=0.5,0.5
+        try:
+            exx_c,eyy_c,exy_c = strain_field(xc,yc,m)
+            exx_xp,eyy_xp,exy_xp = strain_field(xc+h,yc,m)
+            exx_xm,eyy_xm,exy_xm = strain_field(xc-h,yc,m)
+            exx_yp,eyy_yp,exy_yp = strain_field(xc,yc+h,m)
+            exx_ym,eyy_ym,exy_ym = strain_field(xc,yc-h,m)
+            exx_pp,eyy_pp,exy_pp = strain_field(xc+h,yc+h,m)
+            exx_pm,eyy_pm,exy_pm = strain_field(xc+h,yc-h,m)
+            exx_mp,eyy_mp,exy_mp = strain_field(xc-h,yc+h,m)
+            exx_mm,eyy_mm,exy_mm = strain_field(xc-h,yc-h,m)
+            d2exx_dy2 = (exx_yp - 2*exx_c + exx_ym)/(h*h)
+            d2eyy_dx2 = (eyy_xp - 2*eyy_c + eyy_xm)/(h*h)
+            d2exy_dxdy = (exy_pp - exy_pm - exy_mp + exy_mm)/(4*h*h)
+            compat = d2exx_dy2 + d2eyy_dx2 - 2*d2exy_dxdy
+        except Exception:
+            compat = 0.0
+        status = "Compatible" if abs(compat) < 0.01 else "Incompatible"; color = "green" if abs(compat)<0.01 else "red"
+        ax.set_title(f"Saint-Venant Morph (m={m:.2f})"); ax.text(0.02,0.98, f"Status: {status}\nValue: {compat:.4f}", transform=ax.transAxes, va='top', color=color, bbox=dict(facecolor='white',alpha=0.8), fontweight='bold')
+        return [im]
+    ani = FuncAnimation(fig, update, frames=61, interval=80, blit=False)
+    path = os.path.join(ANIM_DIR, "saint_venant_morph.gif")
+    ani.save(path, writer=PillowWriter(fps=12))
+    plt.close(fig); print(f"Saved animation: {path}")
+
+def anim_physical_interpretation_anim():
+    """Animation 7 (base): 3-case interpretation animated"""
+    F_small = np.array([[1.05,0.02],[0.01,0.98]]); theta_max = np.pi/6; F_large = np.array([[1.4,0.3],[0.1,0.8]])
+    fig, axes = plt.subplots(2,3, figsize=(18,12)); X=np.array([[0,0],[1,0],[1,1],[0,1],[0,0]])
+    def update(frame):
+        t = frame/50.0
+        cases = [
+            (np.eye(2) + t*(F_small-np.eye(2)),'Small Deformation'),
+            (np.array([[np.cos(t*theta_max), -np.sin(t*theta_max)],[np.sin(t*theta_max), np.cos(t*theta_max)]]),'Pure Rotation'),
+            (np.eye(2) + t*(F_large-np.eye(2)), 'Large Deformation')
+        ]
+        for i,(F,name) in enumerate(cases):
+            axes[0,i].clear(); axes[1,i].clear()
+            X_def = X @ F.T; axes[0,i].plot(X[:,0],X[:,1],'b--'); axes[0,i].plot(X_def[:,0],X_def[:,1],'r-')
+            axes[0,i].set_title(f"{name}\nF={np.array2string(F,precision=2)}"); all_x = np.concatenate([X[:,0],X_def[:,0]]); all_y = np.concatenate([X[:,1],X_def[:,1]])
+            margin=0.1; axes[0,i].set_xlim(min(all_x)-margin, max(all_x)+margin); axes[0,i].set_ylim(min(all_y)-margin, max(all_y)+margin); axes[0,i].set_aspect('equal'); axes[0,i].grid(True)
+            E = finite_strain(F); eps = infinitesimal_strain(F); error = np.linalg.norm(E-eps)
+            comps=['ε₁₁','ε₂₂','ε₁₂']; e_vals=[E[0,0],E[1,1],E[0,1]]; eps_vals=[eps[0,0],eps[1,1],eps[0,1]]
+            x_pos=np.arange(len(comps)); width=0.35
+            bars1=axes[1,i].bar(x_pos-width/2, e_vals, width, color='red'); bars2=axes[1,i].bar(x_pos+width/2, eps_vals, width, color='blue')
+            axes[1,i].set_xticks(x_pos); axes[1,i].set_xticklabels(comps); axes[1,i].set_title('Strain Components'); axes[1,i].grid(True)
+            for bar,val in zip(bars1,e_vals):
+                if abs(val)>1e-6: axes[1,i].text(bar.get_x()+bar.get_width()/2, bar.get_height()+np.sign(bar.get_height())*0.001, f'{val:.3f}', ha='center')
+            for bar,val in zip(bars2,eps_vals):
+                if abs(val)>1e-6: axes[1,i].text(bar.get_x()+bar.get_width()/2, bar.get_height()+np.sign(bar.get_height())*0.001, f'{val:.3f}', ha='center')
+            all_vals = e_vals+eps_vals
+            if max(all_vals)>min(all_vals): margin2 = max(abs(max(all_vals)), abs(min(all_vals)))*0.2; axes[1,i].set_ylim(min(all_vals)-margin2, max(all_vals)+margin2)
+            axes[1,i].text(0.5,0.9,f'Error: {error:.4f}', transform=axes[1,i].transAxes, ha='center', bbox=dict(facecolor='yellow',alpha=0.7))
+        return []
+    ani = FuncAnimation(fig, update, frames=51, interval=100, blit=False)
+    path = os.path.join(ANIM_DIR, "physical_interpretation_animation.gif")
+    ani.save(path, writer=PillowWriter(fps=10))
+    plt.close(fig); print(f"Saved animation: {path}")
+
+def anim_deformation_concepts_anim():
+    """Animation 8 (base): different deformation concepts animated"""
+    F_cases = [
+        (np.array([[1.2,0.3],[0.0,0.9]]),'General Deformation'),
+        (np.array([[1.0,0.5],[0.0,1.0]]),'Simple Shear'),
+        (np.array([[1.4,0.0],[0.0,1.4]]),'Uniform Expansion'),
+        (np.array([[0.8,0.0],[0.0,0.8]]),'Uniform Compression'),
+        (np.array([[np.cos(0.3), -np.sin(0.3)],[np.sin(0.3), np.cos(0.3)]]),'Pure Rotation'),
+        (np.array([[1.3,0.0],[0.0,0.7]]),'Anisotropic Stretch'),
+    ]
+    fig, axes = plt.subplots(2,3, figsize=(18,12)); X=np.array([[0,0],[1,0],[1,1],[0,1],[0,0]])
+    def update(frame):
+        t = frame/50.0
+        for i,(F_target,title) in enumerate(F_cases):
+            row,col = i//3, i%3; ax = axes[row,col]; ax.clear()
+            F_t = np.eye(2) + t*(F_target - np.eye(2))
+            X_def = X @ F_t.T
+            ax.plot(X[:,0],X[:,1],'b--'); ax.plot(X_def[:,0],X_def[:,1],'r-')
+            ax.set_title(f"{title}\nt={t:.2f}"); all_x=np.concatenate([X[:,0],X_def[:,0]]); all_y=np.concatenate([X[:,1],X_def[:,1]])
+            margin=0.1; ax.set_xlim(min(all_x)-margin, max(all_x)+margin); ax.set_ylim(min(all_y)-margin, max(all_y)+margin); ax.set_aspect('equal'); ax.grid(True)
+            E = finite_strain(F_t); eps = infinitesimal_strain(F_t); detF = np.linalg.det(F_t)
+            info_text = f"det(F)={detF:.3f}\nE11={E[0,0]:.3f},E22={E[1,1]:.3f}\nε11={eps[0,0]:.3f},ε22={eps[1,1]:.3f}"
+            ax.text(0.02,0.98, info_text, transform=ax.transAxes, va='top', bbox=dict(facecolor='wheat',alpha=0.8), fontsize=8)
+        return []
+    ani = FuncAnimation(fig, update, frames=51, interval=100, blit=False)
+    path = os.path.join(ANIM_DIR, "deformation_concepts_animation.gif")
+    ani.save(path, writer=PillowWriter(fps=10))
+    plt.close(fig); print(f"Saved animation: {path}")
+
+def anim_comprehensive_deformation():
+    """Animation 9 (base): combining grid, ellipse, stretches, volume"""
+    fig, axes = plt.subplots(2,2, figsize=(14,12))
+    F_final = np.array([[1.6,0.5],[0.2,0.9]])
+    x = np.linspace(0,1,6); y = np.linspace(0,1,6); Xg,Yg = np.meshgrid(x,y)
+    points = np.vstack([Xg.flatten(), Yg.flatten()]).T
+    theta = np.linspace(0,2*np.pi,100); unit_circle = np.vstack([np.cos(theta), np.sin(theta)])
+    def update(frame):
+        for ax in axes.flat: ax.clear()
+        t = frame/60.0; F_t = np.eye(2) + t*(F_final - np.eye(2))
+        # Deformed grid
+        ax = axes[0,0]
+        for i in range(len(x)): ax.plot(Xg[i,:], Yg[i,:], 'b-', alpha=0.2)
+        for j in range(len(y)): ax.plot(Xg[:,j], Yg[:,j], 'b-', alpha=0.2)
+        pts_def = points @ F_t.T
+        Xg_def = pts_def[:,0].reshape(Xg.shape); Yg_def = pts_def[:,1].reshape(Yg.shape)
+        for i in range(len(x)): ax.plot(Xg_def[i,:], Yg_def[i,:], 'r-')
+        for j in range(len(y)): ax.plot(Xg_def[:,j], Yg_def[:,j], 'r-')
+        ax.set_title("Deformed Grid"); ax.set_aspect('equal'); ax.grid(True)
+        # Ellipse
+        ax2 = axes[0,1]; ell = F_t @ unit_circle; ax2.plot(unit_circle[0],unit_circle[1],'b--'); ax2.plot(ell[0],ell[1],'r-'); ax2.set_title("Strain Ellipse"); ax2.set_aspect('equal'); ax2.grid(True)
+        stretches,_ = principal_stretches(F_t); vals = [stretches[0],stretches[1],stretches[0]/stretches[1]]
+        ax3 = axes[1,0]; bars = ax3.bar(['λ₁','λ₂','λ₁/λ₂'], vals); ax3.set_title("Principal Stretches"); ax3.set_ylim(0,max(vals)+0.2)
+        ax4 = axes[1,1]; E = finite_strain(F_t); detF = np.linalg.det(F_t); tr_eps = np.trace(E); vals_vol=[detF, detF-1, tr_eps]; bars2 = ax4.bar(['det(F)','ΔV/V','tr(ε)'], vals_vol); ax4.set_title("Volume Change Measures")
+        plt.tight_layout()
+        return []
+    ani = FuncAnimation(fig, update, frames=61, interval=80, blit=False)
+    path = os.path.join(ANIM_DIR, "comprehensive_deformation.gif")
+    ani.save(path, writer=PillowWriter(fps=12))
+    plt.close(fig); print(f"Saved animation: {path}")
+
+# -------------------------
+# Enhanced animations (extra)
+# -------------------------
+
+def anim_enhanced_deformation_visualization():
+    """Enhanced deformation visualization (2x2 panel)"""
+    fig = plt.figure(figsize=(15,10))
+    gs = gridspec.GridSpec(2,2, figure=fig)
+    ax1 = fig.add_subplot(gs[0,0]); ax2 = fig.add_subplot(gs[0,1]); ax3 = fig.add_subplot(gs[1,0]); ax4 = fig.add_subplot(gs[1,1])
+    F_final = np.array([[1.6,0.5],[0.2,0.9]])
+    x = np.linspace(0,1,10); y = np.linspace(0,1,10); Xg,Yg = np.meshgrid(x,y); points = np.vstack([Xg.flatten(), Yg.flatten()]).T
+    theta = np.linspace(0,2*np.pi,100); unit_circle = np.vstack([np.cos(theta), np.sin(theta)])
+    def update(frame):
+        for ax in [ax1,ax2,ax3,ax4]: ax.clear()
+        t = frame/60.0; F_t = np.eye(2) + t*(F_final - np.eye(2))
+        # deformed grid
+        ax1.set_title("Deformation Grid"); pts_def = points @ F_t.T; Xg_def = pts_def[:,0].reshape(Xg.shape); Yg_def = pts_def[:,1].reshape(Yg.shape)
+        for i in range(len(x)): ax1.plot(Xg[i,:], Yg[i,:], 'gray', alpha=0.3)
+        for j in range(len(y)): ax1.plot(Xg[:,j], Yg[:,j], 'gray', alpha=0.3)
+        for i in range(len(x)): ax1.plot(Xg_def[i,:], Yg_def[i,:], 'red', linewidth=1.5)
+        for j in range(len(y)): ax1.plot(Xg_def[:,j], Yg_def[:,j], 'red', linewidth=1.5)
+        ax1.set_aspect('equal'); ax1.grid(True)
+        # ellipse
+        ax2.set_title("Strain Ellipse"); ellipse = F_t @ unit_circle; ax2.plot(unit_circle[0],unit_circle[1],'blue', linestyle='--'); ax2.plot(ellipse[0],ellipse[1],'red')
+        stretches, directions = principal_stretches(F_t)
+        for i,(stretch,direction) in enumerate(zip(stretches,directions.T)):
+            vec = direction*stretch; ax2.arrow(0,0,vec[0],vec[1], head_width=0.05, head_length=0.07, color='green'); ax2.text(vec[0]*1.1,vec[1]*1.1,f'λ{i+1}={stretch:.2f}', color='green')
+        lim = max(np.max(np.abs(ellipse)),1.5); ax2.set_xlim(-lim,lim); ax2.set_ylim(-lim,lim); ax2.set_aspect('equal'); ax2.grid(True)
+        # strain components
+        ax3.set_title("Strain Components Comparison"); E = finite_strain(F_t); eps = infinitesimal_strain(F_t)
+        components=['XX','YY','XY']; e_vals=[E[0,0],E[1,1],E[0,1]]; eps_vals=[eps[0,0],eps[1,1],eps[0,1]]
+        x_pos=np.arange(len(components)); width=0.35
+        bars1 = ax3.bar(x_pos-width/2,e_vals,width, label='Finite (E)'); bars2 = ax3.bar(x_pos+width/2, eps_vals,width, label='Infinitesimal (ε)')
+        for bar,val in zip(bars1,e_vals):
+            if abs(val)>1e-6: ax3.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.001*np.sign(val), f'{val:.3f}', ha='center')
+        for bar,val in zip(bars2,eps_vals):
+            if abs(val)>1e-6: ax3.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.001*np.sign(val), f'{val:.3f}', ha='center')
+        ax3.set_xticks(x_pos); ax3.set_xticklabels(components); ax3.legend(); ax3.grid(True)
+        # volume & error
+        ax4.set_title("Volume Change and Error Analysis"); detF = np.linalg.det(F_t); dV = detF-1; tr_eps = np.trace(eps); error = np.linalg.norm(E-eps)
+        metrics = ['det(F)','ΔV/V','tr(ε)','Error']; values=[detF, dV, tr_eps, error]
+        colors = ['purple','orange','cyan','red']; bars = ax4.bar(metrics, values, color=colors)
+        for bar,val in zip(bars,values): ax4.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.01, f'{val:.3f}', ha='center')
+        ax4.grid(True); ax4.tick_params(axis='x', rotation=45)
+        plt.tight_layout()
+        return []
+    ani = FuncAnimation(fig, update, frames=61, interval=80, blit=False)
+    path = os.path.join(ANIM_DIR, "enhanced_deformation_visualization.gif")
+    ani.save(path, writer=PillowWriter(fps=12))
+    plt.close(fig); print(f"Saved enhanced animation: {path}")
+
+def anim_3d_deformation():
+    """3D deformation animation (enhanced)"""
+    fig = plt.figure(figsize=(12,10))
+    ax = fig.add_subplot(111, projection='3d')
+    x = np.linspace(0,1,6); y = np.linspace(0,1,6); z = np.linspace(0,1,6)
+    X,Y,Z = np.meshgrid(x,y,z)
+    F_final = np.array([[1.5,0.3,0.1],[0.2,0.9,0.2],[0.1,0.1,1.2]])
+    def update(frame):
+        ax.clear()
+        t = frame/50.0; F_t = np.eye(3) + t*(F_final - np.eye(3))
+        points = np.vstack([X.flatten(), Y.flatten(), Z.flatten()]).T; points_def = points @ F_t.T
+        Xd = points_def[:,0].reshape(X.shape); Yd = points_def[:,1].reshape(X.shape); Zd = points_def[:,2].reshape(X.shape)
+        # original (wire) small alpha
+        for i in range(len(x)):
+            for j in range(len(y)):
+                ax.plot3D(X[i,j,:], Y[i,j,:], Z[i,j,:], 'gray', alpha=0.08)
+            for k in range(len(z)):
+                ax.plot3D(X[i,:,k], Y[i,:,k], Z[i,:,k], 'gray', alpha=0.08)
+        for j in range(len(y)):
+            for k in range(len(z)):
+                ax.plot3D(X[:,j,k], Y[:,j,k], Z[:,j,k], 'gray', alpha=0.08)
+        # deformed grid (red)
+        for i in range(len(x)):
+            for j in range(len(y)):
+                ax.plot3D(Xd[i,j,:], Yd[i,j,:], Zd[i,j,:], 'red', linewidth=1.2)
+            for k in range(len(z)):
+                ax.plot3D(Xd[i,:,k], Yd[i,:,k], Zd[i,:,k], 'red', linewidth=1.2)
+        for j in range(len(y)):
+            for k in range(len(z)):
+                ax.plot3D(Xd[:,j,k], Yd[:,j,k], Zd[:,j,k], 'red', linewidth=1.2)
+        detF = np.linalg.det(F_t)
+        ax.set_title(f"3D Deformation (t={t:.2f})  det(F)={detF:.3f}")
+        # equal aspect
+        max_range = np.array([Xd.max()-Xd.min(), Yd.max()-Yd.min(), Zd.max()-Zd.min()]).max()/2.0
+        mid_x = (Xd.max()+Xd.min())*0.5; mid_y=(Yd.max()+Yd.min())*0.5; mid_z=(Zd.max()+Zd.min())*0.5
+        ax.set_xlim(mid_x-max_range, mid_x+max_range); ax.set_ylim(mid_y-max_range, mid_y+max_range); ax.set_zlim(mid_z-max_range, mid_z+max_range)
+        return []
+    ani = FuncAnimation(fig, update, frames=51, interval=100, blit=False)
+    path = os.path.join(ANIM_DIR, "3d_deformation.gif")
+    ani.save(path, writer=PillowWriter(fps=10))
+    plt.close(fig); print(f"Saved 3D animation: {path}")
+
+# -------------------------
+# Runner / CLI
+# -------------------------
+
+def run_all(base_figures=True, base_animations=True, enhanced=False):
+    """Run chosen sets and print summary"""
+    print("Starting generation...")
+    fig_funcs = []
+    anim_funcs = []
+    # Base figures
+    if base_figures:
+        fig_funcs.extend([
+            (fig_systematic_comparison_base, "Systematic Comparison (base)"),
+            (fig_saint_venant_compatibility, "Saint-Venant Compatibility"),
+            (fig_physical_interpretation, "Physical Interpretation"),
+            (fig_principal_strain_volume, "Principal Strain & Volume"),
+            (fig_deformation_concepts, "Deformation Concepts"),
+        ])
+    # Enhanced figures
+    if enhanced:
+        fig_funcs.extend([
+            (fig_enhanced_systematic_comparison, "Enhanced Systematic Comparison (3D)"),
+            (fig_advanced_strain_analysis, "Advanced Strain Analysis"),
+        ])
+    # Base animations
+    if base_animations:
+        anim_funcs.extend([
+            (anim_systematic_comparison, "Animation: Systematic Comparison"),
+            (anim_transition_deformation, "Animation: Transition Deformation"),
+            (anim_rotation_vs_strain, "Animation: Rotation vs Strain"),
+            (anim_principal_ellipse, "Animation: Principal Ellipse"),
+            (anim_volume_change, "Animation: Volume Change"),
+            (anim_saint_venant_morph, "Animation: Saint-Venant Morph"),
+            (anim_physical_interpretation_anim, "Animation: Physical Interpretation"),
+            (anim_deformation_concepts_anim, "Animation: Deformation Concepts"),
+            (anim_comprehensive_deformation, "Animation: Comprehensive Deformation"),
+        ])
+    # Enhanced animations
+    if enhanced:
+        anim_funcs.extend([
+            (anim_enhanced_deformation_visualization, "Enhanced Deformation Visualization"),
+            (anim_3d_deformation, "3D Deformation Animation"),
+        ])
+
+    # run figures
+    print("\nGenerating figures...")
+    for func, name in fig_funcs:
+        try:
+            print(f" → {name} ...", end=" ")
+            func()
+            print("OK")
+        except Exception as e:
+            print(f"FAILED ({e})")
+
+    # run animations
+    print("\nGenerating animations...")
+    for func, name in anim_funcs:
+        try:
+            print(f" → {name} ...", end=" ")
+            func()
+            print("OK")
+        except Exception as e:
+            print(f"FAILED ({e})")
+
+    # summary counts
+    fig_count = len([f for f in os.listdir(FIG_DIR) if f.lower().endswith(('.png','.jpg','.jpeg'))])
+    anim_count = len([f for f in os.listdir(ANIM_DIR) if f.lower().endswith('.gif')])
+    print("\nGeneration completed.")
+    print(f"Figures saved to: {os.path.abspath(FIG_DIR)} ({fig_count} files)")
+    print(f"Animations saved to: {os.path.abspath(ANIM_DIR)} ({anim_count} files)")
+
+def parse_args_and_run():
+    parser = argparse.ArgumentParser(description="Modul 1.3 - Visualization (ultimate merged)")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--figures", action="store_true", help="Generate figures only")
+    group.add_argument("--animations", action="store_true", help="Generate animations only")
+    group.add_argument("--enhanced-only", action="store_true", help="Generate enhanced figures+animations only")
+    parser.add_argument("--no-base", action="store_true", help="Skip base items (when used with --enhanced-only)")
+    args = parser.parse_args()
+
+    if args.figures:
+        run_all(base_figures=True, base_animations=False, enhanced=False)
+    elif args.animations:
+        run_all(base_figures=False, base_animations=True, enhanced=False)
+    elif args.enhanced_only:
+        run_all(base_figures=not args.no_base, base_animations=not args.no_base, enhanced=True)
+    else:
+        # default: all base + enhanced
+        run_all(base_figures=True, base_animations=True, enhanced=True)
+
+if __name__ == "__main__":
+    import sys
+
+    if "ipykernel" in sys.modules:  # lagi jalan di notebook
+        print("⚠️ Running in Jupyter, ignoring argparse. Running ALL (figures + animations).")
+        run_figures(base=True, enhanced=True)
+        run_animations(base=True, enhanced=True)
+    else:  # kalau run dari terminal
+        args = parse_args()
+        if args.figures:
+            run_figures(base=not args.no_base, enhanced=True)
+        if args.animations:
+            run_animations(base=not args.no_base, enhanced=True)
+        if not args.figures and not args.animations:
+            run_figures(base=not args.no_base, enhanced=not args.no_base)
+            run_animations(base=not args.no_base, enhanced=not args.no_base)
